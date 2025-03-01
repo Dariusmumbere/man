@@ -36,19 +36,14 @@ class Service(BaseModel):
 
 class Stock(BaseModel):
     product_name: str
-    product_type: str  # Added product_type
+    product_type: str
     quantity: int
     price_per_unit: float
-
-class Client(BaseModel):
-    name: str
-    email: str
-    phone: str
 
 class BankAccount(BaseModel):
     balance: float
 
-# Create tables in PostgreSQL
+# Initialize database tables
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
@@ -73,17 +68,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS stock (
             id SERIAL PRIMARY KEY,
             product_name TEXT NOT NULL,
-            product_type TEXT NOT NULL,  -- Added product_type
+            product_type TEXT NOT NULL,
             quantity INTEGER NOT NULL,
             price_per_unit REAL NOT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS clients (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            phone TEXT NOT NULL
         )
     ''')
     cursor.execute('''
@@ -141,28 +128,6 @@ def delete_product(product_name: str, product_type: str):
     conn.close()
     return {"message": "Product deleted successfully"}
 
-# Service endpoints
-@app.post("/services/")
-def add_service(service: Service):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO services (name, description, price)
-        VALUES (%s, %s, %s)
-    ''', (service.name, service.description, service.price))
-    conn.commit()
-    conn.close()
-    return {"message": "Service added successfully"}
-
-@app.get("/services/")
-def get_services():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM services')
-    services = cursor.fetchall()
-    conn.close()
-    return {"services": [dict(zip([col[0] for col in cursor.description], row)) for row in services]}
-
 # Stock endpoints
 @app.post("/stock/")
 def add_stock(stock: Stock):
@@ -202,27 +167,27 @@ def delete_stock(product_name: str, product_type: str):
     conn.close()
     return {"message": "Stock item deleted successfully"}
 
-# Client endpoints
-@app.post("/clients/")
-def add_client(client: Client):
+# Service endpoints
+@app.post("/services/")
+def add_service(service: Service):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO clients (name, email, phone)
+        INSERT INTO services (name, description, price)
         VALUES (%s, %s, %s)
-    ''', (client.name, client.email, client.phone))
+    ''', (service.name, service.description, service.price))
     conn.commit()
     conn.close()
-    return {"message": "Client added successfully"}
+    return {"message": "Service added successfully"}
 
-@app.get("/clients/")
-def get_clients():
+@app.get("/services/")
+def get_services():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM clients')
-    clients = cursor.fetchall()
+    cursor.execute('SELECT * FROM services')
+    services = cursor.fetchall()
     conn.close()
-    return {"clients": [dict(zip([col[0] for col in cursor.description], row)) for row in clients]}
+    return {"services": [dict(zip([col[0] for col in cursor.description], row)) for row in services]}
 
 # Bank Account endpoints
 @app.get("/bank_account/")
