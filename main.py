@@ -122,6 +122,23 @@ def get_products():
     conn.close()
     return {"products": [dict(zip([col[0] for col in cursor.description], row)) for row in products]}
 
+@app.delete("/products/{product_name}")
+def delete_product(product_name: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    # Check if the product exists
+    cursor.execute('SELECT * FROM products WHERE name = %s', (product_name,))
+    product = cursor.fetchone()
+    if not product:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Delete the product
+    cursor.execute('DELETE FROM products WHERE name = %s', (product_name,))
+    conn.commit()
+    conn.close()
+    return {"message": "Product deleted successfully"}
+
 # Service endpoints
 @app.post("/services/")
 def add_service(service: Service):
