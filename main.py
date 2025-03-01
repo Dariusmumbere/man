@@ -44,6 +44,9 @@ class Client(BaseModel):
     email: str
     phone: str
 
+class BankAccount(BaseModel):
+    balance: float
+
 # Create tables in PostgreSQL
 def init_db():
     conn = get_db()
@@ -81,6 +84,16 @@ def init_db():
             phone TEXT NOT NULL
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bank_account (
+            id SERIAL PRIMARY KEY,
+            balance REAL NOT NULL
+        )
+    ''')
+    # Initialize the balance to 0 if the table is empty
+    cursor.execute('SELECT COUNT(*) FROM bank_account')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute('INSERT INTO bank_account (balance) VALUES (0)')
     conn.commit()
     conn.close()
 
@@ -174,6 +187,25 @@ def get_clients():
     clients = cursor.fetchall()
     conn.close()
     return {"clients": [dict(zip([col[0] for col in cursor.description], row)) for row in clients]}
+
+# Bank Account endpoints
+@app.get("/bank_account/")
+def get_bank_account():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
+    balance = cursor.fetchone()[0]
+    conn.close()
+    return {"balance": balance}
+
+@app.post("/bank_account/")
+def update_bank_account(bank_account: BankAccount):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (bank_account.balance,))
+    conn.commit()
+    conn.close()
+    return {"message": "Bank account balance updated successfully"}
 
 # Run the application
 if __name__ == "__main__":
