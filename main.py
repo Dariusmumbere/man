@@ -36,6 +36,7 @@ class Service(BaseModel):
 
 class Stock(BaseModel):
     product_name: str
+    product_type: str  # Added product_type
     quantity: int
     price_per_unit: float
 
@@ -72,6 +73,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS stock (
             id SERIAL PRIMARY KEY,
             product_name TEXT NOT NULL,
+            product_type TEXT NOT NULL,  -- Added product_type
             quantity INTEGER NOT NULL,
             price_per_unit REAL NOT NULL
         )
@@ -122,19 +124,19 @@ def get_products():
     conn.close()
     return {"products": [dict(zip([col[0] for col in cursor.description], row)) for row in products]}
 
-@app.delete("/products/{product_name}")
-def delete_product(product_name: str):
+@app.delete("/products/{product_name}/{product_type}")
+def delete_product(product_name: str, product_type: str):
     conn = get_db()
     cursor = conn.cursor()
     # Check if the product exists
-    cursor.execute('SELECT * FROM products WHERE name = %s', (product_name,))
+    cursor.execute('SELECT * FROM products WHERE name = %s AND type = %s', (product_name, product_type))
     product = cursor.fetchone()
     if not product:
         conn.close()
         raise HTTPException(status_code=404, detail="Product not found")
     
     # Delete the product
-    cursor.execute('DELETE FROM products WHERE name = %s', (product_name,))
+    cursor.execute('DELETE FROM products WHERE name = %s AND type = %s', (product_name, product_type))
     conn.commit()
     conn.close()
     return {"message": "Product deleted successfully"}
@@ -167,9 +169,9 @@ def add_stock(stock: Stock):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO stock (product_name, quantity, price_per_unit)
-        VALUES (%s, %s, %s)
-    ''', (stock.product_name, stock.quantity, stock.price_per_unit))
+        INSERT INTO stock (product_name, product_type, quantity, price_per_unit)
+        VALUES (%s, %s, %s, %s)
+    ''', (stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit))
     conn.commit()
     conn.close()
     return {"message": "Stock added successfully"}
@@ -182,6 +184,23 @@ def get_stock():
     stock = cursor.fetchall()
     conn.close()
     return {"stock": [dict(zip([col[0] for col in cursor.description], row)) for row in stock]}
+
+@app.delete("/stock/{product_name}/{product_type}")
+def delete_stock(product_name: str, product_type: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    # Check if the stock item exists
+    cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+    stock_item = cursor.fetchone()
+    if not stock_item:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Stock item not found")
+    
+    # Delete the stock item
+    cursor.execute('DELETE FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+    conn.commit()
+    conn.close()
+    return {"message": "Stock item deleted successfully"}
 
 # Client endpoints
 @app.post("/clients/")
