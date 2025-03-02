@@ -133,13 +133,28 @@ def delete_product(product_name: str, product_type: str):
 def add_stock(stock: Stock):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO stock (product_name, product_type, quantity, price_per_unit)
-        VALUES (%s, %s, %s, %s)
-    ''', (stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit))
+    # Check if the stock item already exists
+    cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (stock.product_name, stock.product_type))
+    existing_stock = cursor.fetchone()
+    
+    if existing_stock:
+        # Update the existing stock item
+        new_quantity = existing_stock[3] + stock.quantity
+        cursor.execute('''
+            UPDATE stock
+            SET quantity = %s, price_per_unit = %s
+            WHERE product_name = %s AND product_type = %s
+        ''', (new_quantity, stock.price_per_unit, stock.product_name, stock.product_type))
+    else:
+        # Insert a new stock item
+        cursor.execute('''
+            INSERT INTO stock (product_name, product_type, quantity, price_per_unit)
+            VALUES (%s, %s, %s, %s)
+        ''', (stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit))
+    
     conn.commit()
     conn.close()
-    return {"message": "Stock added successfully"}
+    return {"message": "Stock added/updated successfully"}
 
 @app.get("/stock/")
 def get_stock():
