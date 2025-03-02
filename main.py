@@ -116,6 +116,7 @@ def add_product(product: Product):
     try:
         conn = get_db()
         cursor = conn.cursor()
+        logger.debug(f"Adding product: {product}")  # Log incoming data
         cursor.execute('''
             INSERT INTO products (name, type, buying_price, selling_price, quantity_available, unit_price, total_amount_bought)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -129,7 +130,7 @@ def add_product(product: Product):
         logger.error(f"Error adding product: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to add product")
+        raise HTTPException(status_code=500, detail=f"Failed to add product: {str(e)}")  # Include error details
     finally:
         if conn:
             conn.close()
