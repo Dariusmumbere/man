@@ -33,6 +33,9 @@ class Product(BaseModel):
     type: str
     buying_price: float
     selling_price: float
+    quantity_available: int
+    unit_price: float
+    total_amount_bought: float
 
 class Service(BaseModel):
     name: str
@@ -60,7 +63,10 @@ def init_db():
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
                 buying_price REAL NOT NULL,
-                selling_price REAL NOT NULL
+                selling_price REAL NOT NULL,
+                quantity_available INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                total_amount_bought REAL NOT NULL
             )
         ''')
         cursor.execute('''
@@ -111,9 +117,12 @@ def add_product(product: Product):
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO products (name, type, buying_price, selling_price)
-            VALUES (%s, %s, %s, %s)
-        ''', (product.name, product.type, product.buying_price, product.selling_price))
+            INSERT INTO products (name, type, buying_price, selling_price, quantity_available, unit_price, total_amount_bought)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            product.name, product.type, product.buying_price, product.selling_price,
+            product.quantity_available, product.unit_price, product.total_amount_bought
+        ))
         conn.commit()
         return {"message": "Product added successfully"}
     except Exception as e:
