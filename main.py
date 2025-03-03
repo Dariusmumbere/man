@@ -47,6 +47,7 @@ class Stock(BaseModel):
     product_type: str
     quantity: int
     price_per_unit: float
+    total_invested: float
 
 class BankAccount(BaseModel):
     balance: float
@@ -83,7 +84,8 @@ def init_db():
                 product_name TEXT NOT NULL,
                 product_type TEXT NOT NULL,
                 quantity INTEGER NOT NULL,
-                price_per_unit REAL NOT NULL
+                price_per_unit REAL NOT NULL,
+                total_invested REAL NOT NULL
             )
         ''')
         cursor.execute('''
@@ -194,17 +196,18 @@ def add_stock(stock: Stock):
         if existing_stock:
             # Update the existing stock item
             new_quantity = existing_stock[3] + stock.quantity
+            new_total_invested = existing_stock[5] + stock.total_invested
             cursor.execute('''
                 UPDATE stock
-                SET quantity = %s, price_per_unit = %s
+                SET quantity = %s, price_per_unit = %s, total_invested = %s
                 WHERE product_name = %s AND product_type = %s
-            ''', (new_quantity, stock.price_per_unit, stock.product_name, stock.product_type))
+            ''', (new_quantity, stock.price_per_unit, new_total_invested, stock.product_name, stock.product_type))
         else:
             # Insert a new stock item
             cursor.execute('''
-                INSERT INTO stock (product_name, product_type, quantity, price_per_unit)
-                VALUES (%s, %s, %s, %s)
-            ''', (stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit))
+                INSERT INTO stock (product_name, product_type, quantity, price_per_unit, total_invested)
+                VALUES (%s, %s, %s, %s, %s)
+            ''', (stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit, stock.total_invested))
 
         conn.commit()
         return {"message": "Stock added/updated successfully"}
