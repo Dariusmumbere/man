@@ -49,24 +49,14 @@ class Stock(BaseModel):
 class BankAccount(BaseModel):
     balance: float
 
-class Client(BaseModel):
-    name: str
-    email: str
-    phone: str
-
 # Initialize database tables
 def init_db():
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
-        # Drop and recreate tables to ensure the correct schema
-        cursor.execute('DROP TABLE IF EXISTS products;')
-        cursor.execute('DROP TABLE IF EXISTS services;')
+        # Drop and recreate the stock table to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS stock;')
-        cursor.execute('DROP TABLE IF EXISTS bank_account;')
-        cursor.execute('DROP TABLE IF EXISTS clients;')
-
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
@@ -97,14 +87,6 @@ def init_db():
             CREATE TABLE IF NOT EXISTS bank_account (
                 id SERIAL PRIMARY KEY,
                 balance REAL NOT NULL
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS clients (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                phone TEXT NOT NULL
             )
         ''')
         # Initialize the balance to 0 if the table is empty
@@ -345,67 +327,6 @@ def update_bank_account(bank_account: BankAccount):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to update bank account balance")
-    finally:
-        if conn:
-            conn.close()
-
-# Client endpoints
-@app.post("/clients/")
-def add_client(client: Client):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO clients (name, email, phone)
-            VALUES (%s, %s, %s)
-        ''', (client.name, client.email, client.phone))
-        conn.commit()
-        return {"message": "Client added successfully"}
-    except Exception as e:
-        logger.error(f"Error adding client: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to add client")
-    finally:
-        if conn:
-            conn.close()
-
-@app.get("/clients/")
-def get_clients():
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM clients')
-        clients = cursor.fetchall()
-        return {"clients": [dict(zip([col[0] for col in cursor.description], row)) for row in clients]}
-    except Exception as e:
-        logger.error(f"Error fetching clients: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch clients")
-    finally:
-        if conn:
-            conn.close()
-
-@app.delete("/clients/{client_name}")
-def delete_client(client_name: str):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM clients WHERE name = %s', (client_name,))
-        client = cursor.fetchone()
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
-
-        cursor.execute('DELETE FROM clients WHERE name = %s', (client_name,))
-        conn.commit()
-        return {"message": "Client deleted successfully"}
-    except Exception as e:
-        logger.error(f"Error deleting client: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete client")
     finally:
         if conn:
             conn.close()
