@@ -55,6 +55,8 @@ def init_db():
     try:
         conn = get_db()
         cursor = conn.cursor()
+        # Drop and recreate the stock table to ensure the correct schema
+        cursor.execute('DROP TABLE IF EXISTS stock;')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
@@ -176,6 +178,7 @@ def add_stock(stock: Stock):
         conn = get_db()
         cursor = conn.cursor()
 
+        # Insert into the stock table
         cursor.execute('''
             INSERT INTO stock (product_name, product_type, quantity, price_per_unit)
             VALUES (%s, %s, %s, %s)
@@ -188,7 +191,7 @@ def add_stock(stock: Stock):
         logger.error(f"Error adding stock: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to add stock")
+        raise HTTPException(status_code=500, detail=f"Failed to add stock: {str(e)}")
     finally:
         if conn:
             conn.close()
