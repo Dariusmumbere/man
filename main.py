@@ -46,8 +46,9 @@ class Stock(BaseModel):
     quantity: int
     price_per_unit: float
 
-class BankAccount(BaseModel):
+class BankAccountUpdate(BaseModel):
     balance: float
+    purpose: str
 
 class Client(BaseModel):
     name: str
@@ -332,12 +333,15 @@ def get_bank_account():
             conn.close()
 
 @app.post("/bank_account/")
-def update_bank_account(bank_account: BankAccount):
+def update_bank_account(bank_account: BankAccountUpdate):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (bank_account.balance,))
+        cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
+        current_balance = cursor.fetchone()[0]
+        new_balance = current_balance + bank_account.balance
+        cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (new_balance,))
         conn.commit()
         return {"message": "Bank account balance updated successfully"}
     except Exception as e:
