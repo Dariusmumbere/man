@@ -33,9 +33,6 @@ class Product(BaseModel):
     type: str
     buying_price: float
     selling_price: float
-    quantity_available: int
-    unit_price: float
-    total_amount_bought: float
 
 class Service(BaseModel):
     name: str
