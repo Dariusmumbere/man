@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import os
 import psycopg2
 import logging
+from typing import List, Optional
 
 app = FastAPI()
 
@@ -44,7 +45,6 @@ class Stock(BaseModel):
     product_type: str
     quantity: int
     price_per_unit: float
-    total_invested: float
 
 class BankAccount(BaseModel):
     balance: float
@@ -61,10 +61,7 @@ def init_db():
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
                 buying_price REAL NOT NULL,
-                selling_price REAL NOT NULL,
-                quantity_available INTEGER NOT NULL,
-                unit_price REAL NOT NULL,
-                total_amount_bought REAL NOT NULL
+                selling_price REAL NOT NULL
             )
         ''')
         cursor.execute('''
@@ -81,8 +78,7 @@ def init_db():
                 product_name TEXT NOT NULL,
                 product_type TEXT NOT NULL,
                 quantity INTEGER NOT NULL,
-                price_per_unit REAL NOT NULL,
-                total_invested REAL NOT NULL
+                price_per_unit REAL NOT NULL
             )
         ''')
         cursor.execute('''
@@ -115,13 +111,12 @@ def add_product(product: Product):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        logger.debug(f"Adding product: {product}")  # Log incoming data
+        logger.debug(f"Adding product: {product}")
         cursor.execute('''
-            INSERT INTO products (name, type, buying_price, selling_price, quantity_available, unit_price, total_amount_bought)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO products (name, type, buying_price, selling_price)
+            VALUES (%s, %s, %s, %s)
         ''', (
-            product.name, product.type, product.buying_price, product.selling_price,
-            product.quantity_available, product.unit_price, product.total_amount_bought
+            product.name, product.type, product.buying_price, product.selling_price
         ))
         conn.commit()
         return {"message": "Product added successfully"}
@@ -129,7 +124,7 @@ def add_product(product: Product):
         logger.error(f"Error adding product: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to add product: {str(e)}")  # Include error details
+        raise HTTPException(status_code=500, detail=f"Failed to add product: {str(e)}")
     finally:
         if conn:
             conn.close()
@@ -156,13 +151,11 @@ def delete_product(product_name: str, product_type: str):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        # Check if the product exists
         cursor.execute('SELECT * FROM products WHERE name = %s AND type = %s', (product_name, product_type))
         product = cursor.fetchone()
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        # Delete the product
         cursor.execute('DELETE FROM products WHERE name = %s AND type = %s', (product_name, product_type))
         conn.commit()
         return {"message": "Product deleted successfully"}
@@ -183,33 +176,16 @@ def add_stock(stock: Stock):
         conn = get_db()
         cursor = conn.cursor()
 
-        # Check if the stock item already exists
         cursor.execute('''
-            SELECT * FROM stock 
-            WHERE product_name = %s AND product_type = %s
-        ''', (stock.product_name, stock.product_type))
-        existing_stock = cursor.fetchone()
-
-        if existing_stock:
-            # Update the existing stock item
-            new_quantity = existing_stock[3] + stock.quantity
-            new_total_invested = existing_stock[5] + stock.total_invested
-            cursor.execute('''
-                UPDATE stock
-                SET quantity = %s, price_per_unit = %s, total_invested = %s
-                WHERE product_name = %s AND product_type = %s
-            ''', (new_quantity, stock.price_per_unit, new_total_invested, stock.product_name, stock.product_type))
-        else:
-            # Insert a new stock item
-            cursor.execute('''
-                INSERT INTO stock (product_name, product_type, quantity, price_per_unit, total_invested)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit, stock.total_invested))
-
+            INSERT INTO stock (product_name, product_type, quantity, price_per_unit)
+            VALUES (%s, %s, %s, %s)
+        ''', (
+            stock.product_name, stock.product_type, stock.quantity, stock.price_per_unit
+        ))
         conn.commit()
-        return {"message": "Stock added/updated successfully"}
+        return {"message": "Stock added successfully"}
     except Exception as e:
-        logger.error(f"Error adding/updating stock: {e}")
+        logger.error(f"Error adding stock: {e}")
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to add stock")
@@ -239,13 +215,11 @@ def delete_stock(product_name: str, product_type: str):
     try:
         conn = get_db()
         cursor = conn.cursor()
-        # Check if the stock item exists
         cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
         stock_item = cursor.fetchone()
         if not stock_item:
             raise HTTPException(status_code=404, detail="Stock item not found")
 
-        # Delete the stock item
         cursor.execute('DELETE FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
         conn.commit()
         return {"message": "Stock item deleted successfully"}
@@ -292,6 +266,29 @@ def get_services():
     except Exception as e:
         logger.error(f"Error fetching services: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch services")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/services/{service_name}")
+def delete_service(service_name: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM services WHERE name = %s', (service_name,))
+        service = cursor.fetchone()
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+
+        cursor.execute('DELETE FROM services WHERE name = %s', (service_name,))
+        conn.commit()
+        return {"message": "Service deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting service: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete service")
     finally:
         if conn:
             conn.close()
