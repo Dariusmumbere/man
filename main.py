@@ -57,6 +57,13 @@ class Client(BaseModel):
     email: str
     phone: str
 
+class Asset(BaseModel):
+    name: str
+    type: str
+    cost_price: float
+    current_value: float
+    quantity: int
+
 class SaleItem(BaseModel):
     name: str
     quantity: int
@@ -116,6 +123,16 @@ def init_db():
                 name TEXT NOT NULL,
                 email TEXT NOT NULL,
                 phone TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS assets (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                cost_price REAL NOT NULL,
+                current_value REAL NOT NULL,
+                quantity INTEGER NOT NULL
             )
         ''')
         cursor.execute('''
@@ -209,6 +226,22 @@ def delete_product(product_name: str, product_type: str):
             conn.close()
 
 # Stock endpoints
+@app.get("/total_stock/")
+def get_total_stock():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT SUM(quantity * price_per_unit) FROM stock')
+        total_stock = cursor.fetchone()[0] or 0
+        return {"total_stock": total_stock}
+    except Exception as e:
+        logger.error(f"Error calculating total stock: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate total stock")
+    finally:
+        if conn:
+            conn.close()
+
 @app.post("/stock/")
 def add_stock(stock: Stock):
     conn = None
@@ -427,6 +460,98 @@ def delete_client(client_name: str):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete client")
+    finally:
+        if conn:
+            conn.close()
+
+# Asset endpoints
+@app.post("/assets/")
+def add_asset(asset: Asset):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO assets (name, type, cost_price, current_value, quantity)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (asset.name, asset.type, asset.cost_price, asset.current_value, asset.quantity))
+        conn.commit()
+        return {"message": "Asset added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding asset: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add asset: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/assets/")
+def get_assets():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM assets')
+        assets = cursor.fetchall()
+        return {"assets": [dict(zip([col[0] for col in cursor.description], row)) for row in assets]}
+    except Exception as e:
+        logger.error(f"Error fetching assets: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch assets")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/assets/{asset_id}")
+def delete_asset(asset_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM assets WHERE id = %s', (asset_id,))
+        asset = cursor.fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        cursor.execute('DELETE FROM assets WHERE id = %s', (asset_id,))
+        conn.commit()
+        return {"message": "Asset deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting asset: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete asset")
+    finally:
+        if conn:
+            conn.close()
+
+# Total Investment endpoint
+@app.get("/total_investment/")
+def get_total_investment():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Get total investment from assets
+        cursor.execute('SELECT SUM(cost_price * quantity) FROM assets')
+        total_assets = cursor.fetchone()[0] or 0
+
+        # Get bank account balance
+        cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
+        bank_balance = cursor.fetchone()[0] or 0
+
+        # Get total amount in stock
+        cursor.execute('SELECT SUM(quantity * price_per_unit) FROM stock')
+        total_stock = cursor.fetchone()[0] or 0
+
+        # Calculate total investment
+        total_investment = total_assets + bank_balance + total_stock
+
+        return {"total_investment": total_investment}
+    except Exception as e:
+        logger.error(f"Error calculating total investment: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate total investment")
     finally:
         if conn:
             conn.close()
