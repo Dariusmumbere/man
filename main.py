@@ -495,8 +495,22 @@ def get_total_investment():
     try:
         conn = get_db()
         cursor = conn.cursor()
+
+        # Get total investment from assets
         cursor.execute('SELECT SUM(cost_price * quantity) FROM assets')
-        total_investment = cursor.fetchone()[0] or 0
+        total_assets = cursor.fetchone()[0] or 0
+
+        # Get bank account balance
+        cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
+        bank_balance = cursor.fetchone()[0] or 0
+
+        # Get total amount in stock
+        cursor.execute('SELECT SUM(quantity * price_per_unit) FROM stock')
+        total_stock = cursor.fetchone()[0] or 0
+
+        # Calculate total investment
+        total_investment = total_assets + bank_balance + total_stock
+
         return {"total_investment": total_investment}
     except Exception as e:
         logger.error(f"Error calculating total investment: {e}")
