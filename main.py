@@ -203,6 +203,21 @@ def delete_product(product_name: str, product_type: str):
             conn.close()
 
 # Stock endpoints
+@app.get("/total_stock/")
+def get_total_stock():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT SUM(quantity * price_per_unit) FROM stock')
+        total_stock = cursor.fetchone()[0] or 0
+        return {"total_stock": total_stock}
+    except Exception as e:
+        logger.error(f"Error calculating total stock: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate total stock")
+    finally:
+        if conn:
+            conn.close()
 @app.post("/stock/")
 def add_stock(stock: Stock):
     conn = None
