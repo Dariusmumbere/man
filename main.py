@@ -29,65 +29,6 @@ def get_db():
     return conn
 
 # Pydantic models
-class Asset(BaseModel):
-    name: str
-    type: str
-    cost_price: float
-    current_value: float
-    quantity: int
-
-@app.post("/assets/")
-def add_asset(asset: Asset):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO assets (name, type, cost_price, current_value, quantity)
-            VALUES (%s, %s, %s, %s, %s)
-        ''', (asset.name, asset.type, asset.cost_price, asset.current_value, asset.quantity))
-        conn.commit()
-        return {"message": "Asset added successfully"}
-    except Exception as e:
-        logger.error(f"Error adding asset: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to add asset: {str(e)}")
-    finally:
-        if conn:
-            conn.close()
-
-@app.get("/assets/")
-def get_assets():
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM assets')
-        assets = cursor.fetchall()
-        return {"assets": [dict(zip([col[0] for col in cursor.description], row)) for row in assets]}
-    except Exception as e:
-        logger.error(f"Error fetching assets: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch assets")
-    finally:
-        if conn:
-            conn.close()
-@app.get("/total_investment/")
-def get_total_investment():
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT SUM(cost_price * quantity) FROM assets')
-        total_investment = cursor.fetchone()[0] or 0
-        return {"total_investment": total_investment}
-    except Exception as e:
-        logger.error(f"Error calculating total investment: {e}")
-        raise HTTPException(status_code=500, detail="Failed to calculate total investment")
-    finally:
-        if conn:
-            conn.close()
-            
 class Product(BaseModel):
     name: str
     type: str
@@ -114,6 +55,13 @@ class Client(BaseModel):
     email: str
     phone: str
 
+class Asset(BaseModel):
+    name: str
+    type: str
+    cost_price: float
+    current_value: float
+    quantity: int
+
 # Initialize database tables
 def init_db():
     conn = None
@@ -126,6 +74,7 @@ def init_db():
         cursor.execute('DROP TABLE IF EXISTS stock;')
         cursor.execute('DROP TABLE IF EXISTS bank_account;')
         cursor.execute('DROP TABLE IF EXISTS clients;')
+        cursor.execute('DROP TABLE IF EXISTS assets;')
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
@@ -167,7 +116,7 @@ def init_db():
                 phone TEXT NOT NULL
             )
         ''')
-         cursor.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS assets (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -479,6 +428,84 @@ def delete_client(client_name: str):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete client")
+    finally:
+        if conn:
+            conn.close()
+
+# Asset endpoints
+@app.post("/assets/")
+def add_asset(asset: Asset):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO assets (name, type, cost_price, current_value, quantity)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (asset.name, asset.type, asset.cost_price, asset.current_value, asset.quantity))
+        conn.commit()
+        return {"message": "Asset added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding asset: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add asset: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/assets/")
+def get_assets():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM assets')
+        assets = cursor.fetchall()
+        return {"assets": [dict(zip([col[0] for col in cursor.description], row)) for row in assets]}
+    except Exception as e:
+        logger.error(f"Error fetching assets: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch assets")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/assets/{asset_id}")
+def delete_asset(asset_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM assets WHERE id = %s', (asset_id,))
+        asset = cursor.fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        cursor.execute('DELETE FROM assets WHERE id = %s', (asset_id,))
+        conn.commit()
+        return {"message": "Asset deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting asset: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete asset")
+    finally:
+        if conn:
+            conn.close()
+
+# Total Investment endpoint
+@app.get("/total_investment/")
+def get_total_investment():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT SUM(cost_price * quantity) FROM assets')
+        total_investment = cursor.fetchone()[0] or 0
+        return {"total_investment": total_investment}
+    except Exception as e:
+        logger.error(f"Error calculating total investment: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate total investment")
     finally:
         if conn:
             conn.close()
