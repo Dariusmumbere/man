@@ -29,6 +29,65 @@ def get_db():
     return conn
 
 # Pydantic models
+class Asset(BaseModel):
+    name: str
+    type: str
+    cost_price: float
+    current_value: float
+    quantity: int
+
+@app.post("/assets/")
+def add_asset(asset: Asset):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO assets (name, type, cost_price, current_value, quantity)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (asset.name, asset.type, asset.cost_price, asset.current_value, asset.quantity))
+        conn.commit()
+        return {"message": "Asset added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding asset: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add asset: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/assets/")
+def get_assets():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM assets')
+        assets = cursor.fetchall()
+        return {"assets": [dict(zip([col[0] for col in cursor.description], row)) for row in assets]}
+    except Exception as e:
+        logger.error(f"Error fetching assets: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch assets")
+    finally:
+        if conn:
+            conn.close()
+@app.get("/total_investment/")
+def get_total_investment():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT SUM(cost_price * quantity) FROM assets')
+        total_investment = cursor.fetchone()[0] or 0
+        return {"total_investment": total_investment}
+    except Exception as e:
+        logger.error(f"Error calculating total investment: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate total investment")
+    finally:
+        if conn:
+            conn.close()
+            
 class Product(BaseModel):
     name: str
     type: str
@@ -106,6 +165,16 @@ def init_db():
                 name TEXT NOT NULL,
                 email TEXT NOT NULL,
                 phone TEXT NOT NULL
+            )
+        ''')
+         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS assets (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                cost_price REAL NOT NULL,
+                current_value REAL NOT NULL,
+                quantity INTEGER NOT NULL
             )
         ''')
         # Initialize the balance to 0 if the table is empty
