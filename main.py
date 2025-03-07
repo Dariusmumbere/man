@@ -74,6 +74,13 @@ class Sale(BaseModel):
     client_name: str
     items: List[SaleItem]
     total_amount: float
+    
+class Expense(BaseModel):
+    date: str
+    person: str
+    description: str
+    cost: float
+    quantity: int    
 
 # Initialize database tables
 def init_db():
@@ -142,6 +149,18 @@ def init_db():
                 items JSONB NOT NULL,
                 total_amount REAL NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('DROP TABLE IF EXISTS expenses;')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS expenses (
+                id SERIAL PRIMARY KEY,
+                date DATE NOT NULL,
+                person TEXT NOT NULL,
+                description TEXT NOT NULL,
+                cost REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                total REAL NOT NULL
             )
         ''')
         # Initialize the balance to 0 if the table is empty
@@ -641,6 +660,85 @@ def delete_sale(sale_id: int):
     finally:
         if conn:
             conn.close()    
+# Expense endpoints
+@app.post("/expenses/")
+def add_expense(expense: Expense):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        total = expense.cost * expense.quantity
+
+        # Insert the expense into the database
+        cursor.execute('''
+            INSERT INTO expenses (date, person, description, cost, quantity, total)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (
+            expense.date, expense.person, expense.description, expense.cost, expense.quantity, total
+        ))
+
+        # Update the bank account balance
+        cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
+        current_balance = cursor.fetchone()[0]
+        new_balance = current_balance - total
+        cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (new_balance,))
+
+        conn.commit()
+        return {"message": "Expense added and balance updated successfully"}
+    except Exception as e:
+        logger.error(f"Error adding expense: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add expense: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/expenses/")
+def get_expenses():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM expenses ORDER BY date DESC')
+        expenses = cursor.fetchall()
+        return {"expenses": [dict(zip([col[0] for col in cursor.description], row)) for row in expenses]}
+    except Exception as e:
+        logger.error(f"Error fetching expenses: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch expenses")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/expenses/{expense_id}")
+def delete_expense(expense_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM expenses WHERE id = %s', (expense_id,))
+        expense = cursor.fetchone()
+        if not expense:
+            raise HTTPException(status_code=404, detail="Expense not found")
+
+        # Restore the balance
+        cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
+        current_balance = cursor.fetchone()[0]
+        new_balance = current_balance + expense[5]  # expense[5] is the total
+        cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (new_balance,))
+
+        # Delete the expense
+        cursor.execute('DELETE FROM expenses WHERE id = %s', (expense_id,))
+        conn.commit()
+        return {"message": "Expense deleted and balance restored successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting expense: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete expense")
+    finally:
+        if conn:
+            conn.close()            
 
 # Run the application
 if __name__ == "__main__":
