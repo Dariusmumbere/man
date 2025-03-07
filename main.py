@@ -82,12 +82,6 @@ class Expense(BaseModel):
     cost: float
     quantity: int    
     
-class AddQuantityRequest(BaseModel):
-    product_name: str
-    product_type: str
-    quantity: int
-    
-
 # Initialize database tables
 def init_db():
     conn = None
@@ -745,34 +739,29 @@ def delete_expense(expense_id: int):
     finally:
         if conn:
             conn.close()            
-@app.post("/stock/add_quantity")
-def add_quantity(request: AddQuantityRequest):
+@app.put("/stock/{product_name}/{product_type}/add_quantity")
+def add_stock_quantity(product_name: str, product_type: str, quantity: int):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
-        
-        # Fetch the current quantity
-        cursor.execute('SELECT quantity FROM stock WHERE product_name = %s AND product_type = %s', (request.product_name, request.product_type))
-        current_quantity = cursor.fetchone()
-        if not current_quantity:
+        cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        stock_item = cursor.fetchone()
+        if not stock_item:
             raise HTTPException(status_code=404, detail="Stock item not found")
 
-        # Update the quantity
-        new_quantity = current_quantity[0] + request.quantity
-        cursor.execute('UPDATE stock SET quantity = %s WHERE product_name = %s AND product_type = %s', (new_quantity, request.product_name, request.product_type))
-        
+        new_quantity = stock_item[3] + quantity
+        cursor.execute('UPDATE stock SET quantity = %s WHERE product_name = %s AND product_type = %s', (new_quantity, product_name, product_type))
         conn.commit()
-        return {"message": "Quantity added successfully"}
+        return {"message": "Stock quantity updated successfully"}
     except Exception as e:
-        logger.error(f"Error adding quantity: {e}")
+        logger.error(f"Error updating stock quantity: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to add quantity: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update stock quantity")
     finally:
         if conn:
-            conn.close()            
-
+            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
