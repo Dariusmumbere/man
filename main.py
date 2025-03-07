@@ -640,6 +640,24 @@ def delete_sale(sale_id: int):
         raise HTTPException(status_code=500, detail="Failed to delete sale")
     finally:
         if conn:
+            conn.close()    
+@app.get("/sales/")
+def get_sales(date: Optional[str] = None):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        if date:
+            cursor.execute('SELECT * FROM sales WHERE DATE(created_at) = %s ORDER BY created_at DESC', (date,))
+        else:
+            cursor.execute('SELECT * FROM sales ORDER BY created_at DESC')
+        sales = cursor.fetchall()
+        return {"sales": [dict(zip([col[0] for col in cursor.description], row)) for row in sales]}
+    except Exception as e:
+        logger.error(f"Error fetching sales: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch sales")
+    finally:
+        if conn:
             conn.close()            
 
 # Run the application
