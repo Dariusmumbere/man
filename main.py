@@ -81,6 +81,12 @@ class Expense(BaseModel):
     description: str
     cost: float
     quantity: int    
+    
+class AddQuantityRequest(BaseModel):
+    product_name: str
+    product_type: str
+    quantity: int
+    
 
 # Initialize database tables
 def init_db():
@@ -736,6 +742,33 @@ def delete_expense(expense_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete expense")
+    finally:
+        if conn:
+            conn.close()            
+@app.post("/stock/add_quantity")
+def add_quantity(request: AddQuantityRequest):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Fetch the current quantity
+        cursor.execute('SELECT quantity FROM stock WHERE product_name = %s AND product_type = %s', (request.product_name, request.product_type))
+        current_quantity = cursor.fetchone()
+        if not current_quantity:
+            raise HTTPException(status_code=404, detail="Stock item not found")
+
+        # Update the quantity
+        new_quantity = current_quantity[0] + request.quantity
+        cursor.execute('UPDATE stock SET quantity = %s WHERE product_name = %s AND product_type = %s', (new_quantity, request.product_name, request.product_type))
+        
+        conn.commit()
+        return {"message": "Quantity added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding quantity: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add quantity: {str(e)}")
     finally:
         if conn:
             conn.close()            
