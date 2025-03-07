@@ -602,6 +602,45 @@ def get_sales():
     finally:
         if conn:
             conn.close()
+@app.get("/sales/{sale_id}")
+def get_sale(sale_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM sales WHERE id = %s', (sale_id,))
+        sale = cursor.fetchone()
+        if not sale:
+            raise HTTPException(status_code=404, detail="Sale not found")
+        return {"sale": dict(zip([col[0] for col in cursor.description], sale))}
+    except Exception as e:
+        logger.error(f"Error fetching sale: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch sale")
+    finally:
+        if conn:
+            conn.close()
+@app.delete("/sales/{sale_id}")
+def delete_sale(sale_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM sales WHERE id = %s', (sale_id,))
+        sale = cursor.fetchone()
+        if not sale:
+            raise HTTPException(status_code=404, detail="Sale not found")
+
+        cursor.execute('DELETE FROM sales WHERE id = %s', (sale_id,))
+        conn.commit()
+        return {"message": "Sale deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting sale: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete sale")
+    finally:
+        if conn:
+            conn.close()            
 
 # Run the application
 if __name__ == "__main__":
