@@ -89,8 +89,6 @@ def init_db():
         conn = get_db()
         cursor = conn.cursor()
         # Drop and recreate tables to ensure the correct schema
-        cursor.execute('DROP TABLE IF EXISTS bank_account;')
-        cursor.execute('DROP TABLE IF EXISTS sales;')
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
