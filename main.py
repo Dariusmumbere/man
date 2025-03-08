@@ -746,11 +746,20 @@ def update_stock(product_name: str, product_type: str, stock: Stock):
     try:
         conn = get_db()
         cursor = conn.cursor()
+
+        # Check if the stock item exists
+        cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        existing_stock = cursor.fetchone()
+        if not existing_stock:
+            raise HTTPException(status_code=404, detail="Stock item not found")
+
+        # Update the stock item
         cursor.execute('''
             UPDATE stock
             SET quantity = %s, price_per_unit = %s
             WHERE product_name = %s AND product_type = %s
         ''', (stock.quantity, stock.price_per_unit, product_name, product_type))
+
         conn.commit()
         return {"message": "Stock updated successfully"}
     except Exception as e:
