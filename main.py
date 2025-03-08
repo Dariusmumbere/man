@@ -767,6 +767,14 @@ def update_stock(product_name: str, product_type: str, stock: Stock):
     try:
         conn = get_db()
         cursor = conn.cursor()
+
+        # Check if the stock item exists
+        cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        stock_item = cursor.fetchone()
+        if not stock_item:
+            raise HTTPException(status_code=404, detail="Stock item not found")
+
+        # Update the stock item
         cursor.execute('''
             UPDATE stock
             SET quantity = %s, price_per_unit = %s
@@ -781,7 +789,7 @@ def update_stock(product_name: str, product_type: str, stock: Stock):
         raise HTTPException(status_code=500, detail=f"Failed to update stock: {str(e)}")
     finally:
         if conn:
-            conn.close()            
+            conn.close()           
             
 # Run the application
 if __name__ == "__main__":
