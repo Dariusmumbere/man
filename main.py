@@ -300,6 +300,28 @@ def get_stock():
         if conn:
             conn.close()
 
+@app.put("/stock/{product_name}/{product_type}")
+def update_stock(product_name: str, product_type: str, stock: Stock):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE stock
+            SET quantity = %s, price_per_unit = %s
+            WHERE product_name = %s AND product_type = %s
+        ''', (stock.quantity, stock.price_per_unit, product_name, product_type))
+        conn.commit()
+        return {"message": "Stock updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating stock: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update stock: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
 @app.delete("/stock/{product_name}/{product_type}")
 def delete_stock(product_name: str, product_type: str):
     conn = None
@@ -738,29 +760,7 @@ def delete_expense(expense_id: int):
         raise HTTPException(status_code=500, detail="Failed to delete expense")
     finally:
         if conn:
-            conn.close()   
-            
-@app.put("/stock/{product_name}/{product_type}")
-def update_stock(product_name: str, product_type: str, stock: Stock):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE stock
-            SET quantity = %s, price_per_unit = %s
-            WHERE product_name = %s AND product_type = %s
-        ''', (stock.quantity, stock.price_per_unit, product_name, product_type))
-        conn.commit()
-        return {"message": "Stock updated successfully"}
-    except Exception as e:
-        logger.error(f"Error updating stock: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to update stock: {str(e)}")
-    finally:
-        if conn:
-            conn.close()
+            conn.close()            
             
 # Run the application
 if __name__ == "__main__":
