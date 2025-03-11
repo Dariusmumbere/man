@@ -443,12 +443,26 @@ def update_bank_account(bank_account: BankAccountUpdate):
     try:
         conn = get_db()
         cursor = conn.cursor()
+        
+        # Get the current balance
         cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
         current_balance = cursor.fetchone()[0]
+        
+        # Calculate the new balance
         new_balance = current_balance + bank_account.balance
+        
+        # Update the bank account balance
         cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (new_balance,))
+        
+        # Log the transaction
+        transaction_type = "deposit" if bank_account.balance > 0 else "withdraw"
+        cursor.execute('''
+            INSERT INTO transactions (type, amount, purpose)
+            VALUES (%s, %s, %s)
+        ''', (transaction_type, abs(bank_account.balance), bank_account.purpose))
+        
         conn.commit()
-        return {"message": "Bank account balance updated successfully"}
+        return {"message": "Bank account balance updated and transaction logged successfully"}
     except Exception as e:
         logger.error(f"Error updating bank account balance: {e}")
         if conn:
