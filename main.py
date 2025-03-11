@@ -31,6 +31,12 @@ def get_db():
     return conn
 
 # Pydantic models
+class Transaction(BaseModel):
+    date: str
+    type: str  # "deposit" or "withdraw"
+    amount: float
+    purpose: str
+    
 class Product(BaseModel):
     name: str
     type: str
@@ -160,6 +166,15 @@ def init_db():
                 cost REAL NOT NULL,
                 quantity INTEGER NOT NULL,
                 total REAL NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id SERIAL PRIMARY KEY,
+                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                type TEXT NOT NULL,  -- 'deposit' or 'withdraw'
+                amount REAL NOT NULL,
+                purpose TEXT NOT NULL
             )
         ''')
         # Initialize the balance to 0 if the table is empty
@@ -805,7 +820,42 @@ def update_stock(product_name: str, product_type: str, stock: Stock):
         raise HTTPException(status_code=500, detail=f"Failed to update stock: {str(e)}")
     finally:
         if conn:
-            conn.close()           
+            conn.close()        
+
+
+@app.get("/transactions/")
+def get_transactions():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Fetch all transactions from the database
+        cursor.execute('''
+            SELECT date, type, amount, purpose
+            FROM transactions
+            ORDER BY date DESC
+        ''')
+        transactions = cursor.fetchall()
+        
+        # Format the transactions for the frontend
+        formatted_transactions = [
+            {
+                "date": transaction[0].strftime("%Y-%m-%d %H:%M:%S"),  # Format date as string
+                "type": transaction[1],
+                "amount": transaction[2],
+                "purpose": transaction[3]
+            }
+            for transaction in transactions
+        ]
+        
+        return {"transactions": formatted_transactions}
+    except Exception as e:
+        logger.error(f"Error fetching transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch transactions")
+    finally:
+        if conn:
+            conn.close()
             
 # Run the application
 if __name__ == "__main__":
