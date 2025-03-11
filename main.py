@@ -66,6 +66,7 @@ class Asset(BaseModel):
 
 class SaleItem(BaseModel):
     name: str
+    type: str  # "product" or "service"
     quantity: int
     unit_price: float
     total: float
@@ -615,21 +616,22 @@ def create_sale(sale: Sale):
         new_balance = current_balance + sale.total_amount
         cursor.execute('UPDATE bank_account SET balance = %s WHERE id = 1', (new_balance,))
 
-        # Update stock quantities
+        # Update stock quantities for products only
         for item in sale.items:
-            cursor.execute('SELECT * FROM stock WHERE product_name = %s', (item.name,))
-            stock_item = cursor.fetchone()
-            if not stock_item:
-                raise HTTPException(status_code=404, detail=f"Stock item {item.name} not found")
-            if stock_item[3] < item.quantity:  # stock_item[3] is the quantity
-                raise HTTPException(status_code=400, detail=f"Insufficient stock for {item.name}")
+            if item.type == "product":
+                cursor.execute('SELECT * FROM stock WHERE product_name = %s', (item.name,))
+                stock_item = cursor.fetchone()
+                if not stock_item:
+                    raise HTTPException(status_code=404, detail=f"Stock item {item.name} not found")
+                if stock_item[3] < item.quantity:  # stock_item[3] is the quantity
+                    raise HTTPException(status_code=400, detail=f"Insufficient stock for {item.name}")
 
-            cursor.execute('''
-                UPDATE stock
-                SET quantity = quantity - %s
-                WHERE product_name = %s
-            ''', (item.quantity, item.name))
-            conn.commit()
+                cursor.execute('''
+                    UPDATE stock
+                    SET quantity = quantity - %s
+                    WHERE product_name = %s
+                ''', (item.quantity, item.name))
+                conn.commit()
 
         conn.commit()
         return {"message": "Sale created, bank account updated, and stock quantities reduced successfully"}
@@ -641,6 +643,7 @@ def create_sale(sale: Sale):
     finally:
         if conn:
             conn.close()
+            
 @app.get("/sales/")
 def get_sales():
     conn = None
