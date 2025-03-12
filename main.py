@@ -183,14 +183,16 @@ def init_db():
                 purpose TEXT NOT NULL
             )
         ''')
-        CREATE TABLE IF NOT EXISTS notifications (
-            id SERIAL PRIMARY KEY,
-            message TEXT NOT NULL,
-            type TEXT NOT NULL,  -- e.g., 'sale', 'transaction', 'stock_update'
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_read BOOLEAN DEFAULT FALSE  -- Track read/unread status
-        );
-        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                message TEXT NOT NULL,
+                type TEXT NOT NULL,  -- e.g., 'sale', 'transaction', 'stock_update'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_read BOOLEAN DEFAULT FALSE  -- Track read/unread status
+            )
+        ''')
+            
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
         if cursor.fetchone()[0] == 0:
