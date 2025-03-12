@@ -878,24 +878,37 @@ def get_net_profit():
         conn = get_db()
         cursor = conn.cursor()
 
-        # Fetch total sales revenue
+        # 1. Fetch total sales revenue
         cursor.execute('SELECT SUM(total_amount) FROM sales')
         total_sales_revenue = cursor.fetchone()[0] or 0
 
-        # Fetch total cost of goods sold
+        # 2. Fetch total cost of goods sold (COGS)
+        # For products: quantity * buying_price
         cursor.execute('''
-            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float)
+            SELECT SUM((item->>'quantity')::int * p.buying_price)
             FROM sales, jsonb_array_elements(items) AS item
+            JOIN products p ON p.name = item->>'name'
             WHERE item->>'type' = 'product'
         ''')
-        total_cost_of_goods_sold = cursor.fetchone()[0] or 0
+        total_cogs_products = cursor.fetchone()[0] or 0
 
-        # Fetch total expenses
+        # For services: quantity * unit_price * 0.7 (since services have a 30% profit margin)
+        cursor.execute('''
+            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float * 0.7)
+            FROM sales, jsonb_array_elements(items) AS item
+            WHERE item->>'type' = 'service'
+        ''')
+        total_cogs_services = cursor.fetchone()[0] or 0
+
+        # Total COGS = COGS for products + COGS for services
+        total_cogs = total_cogs_products + total_cogs_services
+
+        # 3. Fetch total expenses
         cursor.execute('SELECT SUM(total) FROM expenses')
         total_expenses = cursor.fetchone()[0] or 0
 
-        # Calculate net profit
-        net_profit = total_sales_revenue - total_cost_of_goods_sold - total_expenses
+        # 4. Calculate net profit
+        net_profit = (total_sales_revenue - total_cogs) - total_expenses
 
         return {"net_profit": net_profit}
     except Exception as e:
@@ -903,7 +916,7 @@ def get_net_profit():
         raise HTTPException(status_code=500, detail="Failed to calculate net profit")
     finally:
         if conn:
-            conn.close()            
+            conn.close()         
             
 # Run the application
 if __name__ == "__main__":
