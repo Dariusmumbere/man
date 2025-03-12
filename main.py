@@ -31,6 +31,12 @@ def get_db():
     return conn
 
 # Pydantic models
+class Notification(BaseModel):
+    message: str
+    type: str
+    created_at: Optional[datetime] = None
+    is_read: Optional[bool] = False
+
 class Transaction(BaseModel):
     date: str
     type: str  # "deposit" or "withdraw"
@@ -114,6 +120,7 @@ def init_db():
                 price REAL NOT NULL
             )
         ''')
+        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS stock (
                 id SERIAL PRIMARY KEY,
@@ -156,7 +163,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        cursor.execute('DROP TABLE IF EXISTS expenses;')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS expenses (
                 id SERIAL PRIMARY KEY,
@@ -177,6 +183,14 @@ def init_db():
                 purpose TEXT NOT NULL
             )
         ''')
+        CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            message TEXT NOT NULL,
+            type TEXT NOT NULL,  -- e.g., 'sale', 'transaction', 'stock_update'
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_read BOOLEAN DEFAULT FALSE  -- Track read/unread status
+        );
+        
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
         if cursor.fetchone()[0] == 0:
@@ -916,7 +930,82 @@ def get_net_profit():
         raise HTTPException(status_code=500, detail="Failed to calculate net profit")
     finally:
         if conn:
-            conn.close()         
+            conn.close() 
+
+# Create a notification
+@app.post("/notifications/")
+def create_notification(notification: Notification):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO notifications (message, type)
+            VALUES (%s, %s)
+        ''', (notification.message, notification.type))
+        conn.commit()
+        return {"message": "Notification created successfully"}
+    except Exception as e:
+        logger.error(f"Error creating notification: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create notification")
+    finally:
+        if conn:
+            conn.close()
+
+# Fetch all notifications
+@app.get("/notifications/")
+def get_notifications():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM notifications ORDER BY created_at DESC')
+        notifications = cursor.fetchall()
+        return {"notifications": [dict(zip([col[0] for col in cursor.description], row)) for row in notifications]}
+    except Exception as e:
+        logger.error(f"Error fetching notifications: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch notifications")
+    finally:
+        if conn:
+            conn.close()
+
+# Fetch unread notifications count
+@app.get("/notifications/unread/")
+def get_unread_notifications():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM notifications WHERE is_read = FALSE')
+        unread_count = cursor.fetchone()[0]
+        return {"unread_count": unread_count}
+    except Exception as e:
+        logger.error(f"Error fetching unread notifications: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch unread notifications")
+    finally:
+        if conn:
+            conn.close()
+
+# Mark notifications as read
+@app.put("/notifications/mark_as_read/")
+def mark_notifications_as_read():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE notifications SET is_read = TRUE WHERE is_read = FALSE')
+        conn.commit()
+        return {"message": "All notifications marked as read"}
+    except Exception as e:
+        logger.error(f"Error marking notifications as read: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to mark notifications as read")
+    finally:
+        if conn:
+            conn.close()
             
 # Run the application
 if __name__ == "__main__":
