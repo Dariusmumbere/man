@@ -871,6 +871,40 @@ def get_transactions():
         if conn:
             conn.close()
             
+@app.get("/net_profit/")
+def get_net_profit():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Fetch total sales revenue
+        cursor.execute('SELECT SUM(total_amount) FROM sales')
+        total_sales_revenue = cursor.fetchone()[0] or 0
+
+        # Fetch total cost of goods sold
+        cursor.execute('''
+            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float)
+            FROM sales, jsonb_array_elements(items) AS item
+            WHERE item->>'type' = 'product'
+        ''')
+        total_cost_of_goods_sold = cursor.fetchone()[0] or 0
+
+        # Fetch total expenses
+        cursor.execute('SELECT SUM(total) FROM expenses')
+        total_expenses = cursor.fetchone()[0] or 0
+
+        # Calculate net profit
+        net_profit = total_sales_revenue - total_cost_of_goods_sold - total_expenses
+
+        return {"net_profit": net_profit}
+    except Exception as e:
+        logger.error(f"Error calculating net profit: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate net profit")
+    finally:
+        if conn:
+            conn.close()            
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
