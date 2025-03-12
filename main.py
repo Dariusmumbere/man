@@ -653,6 +653,13 @@ def create_sale(sale: Sale):
             VALUES (%s, %s, %s)
         ''', (sale.client_name, json.dumps([item.dict() for item in sale.items]), sale.total_amount))
 
+        # Create a notification for the sale
+        notification_message = f"New sale to {sale.client_name} for UGX {sale.total_amount}"
+        cursor.execute('''
+            INSERT INTO notifications (message, type)
+            VALUES (%s, %s)
+        ''', (notification_message, "sale"))
+
         # Update the bank account balance
         cursor.execute('SELECT balance FROM bank_account WHERE id = 1')
         current_balance = cursor.fetchone()[0]
@@ -674,10 +681,9 @@ def create_sale(sale: Sale):
                     SET quantity = quantity - %s
                     WHERE product_name = %s
                 ''', (item.quantity, item.name))
-                conn.commit()
 
         conn.commit()
-        return {"message": "Sale created, bank account updated, and stock quantities reduced successfully"}
+        return {"message": "Sale created, bank account updated, stock quantities reduced, and notification sent successfully"}
     except Exception as e:
         logger.error(f"Error creating sale: {e}")
         if conn:
