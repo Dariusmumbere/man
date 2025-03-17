@@ -1021,6 +1021,7 @@ def mark_notifications_as_read():
 
 @app.put("/stock/{product_name}/{product_type}")
 def update_stock(product_name: str, product_type: str, stock_update: StockUpdate):
+    logger.debug(f"Updating stock: {product_name}, {product_type}, {stock_update}")
     conn = None
     try:
         conn = get_db()
