@@ -1073,6 +1073,36 @@ def delete_stock(product_name: str, product_type: str):
         if conn:
             conn.close()
 
+@app.put("/stock/{product_name}/{product_type}/increment")
+def increment_stock(product_name: str, product_type: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Check if the stock item exists
+        cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        stock_item = cursor.fetchone()
+        if not stock_item:
+            raise HTTPException(status_code=404, detail="Stock item not found")
+
+        # Increment the quantity by 1
+        cursor.execute('''
+            UPDATE stock
+            SET quantity = quantity + 1
+            WHERE product_name = %s AND product_type = %s
+        ''', (product_name, product_type))
+        conn.commit()
+        return {"message": "Stock quantity incremented successfully"}
+    except Exception as e:
+        logger.error(f"Error incrementing stock: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to increment stock: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
             
 # Run the application
 if __name__ == "__main__":
