@@ -31,6 +31,10 @@ def get_db():
     return conn
 
 # Pydantic models
+class StockUpdate(BaseModel):
+    quantity: int
+    price_per_unit: float
+
 class Notification(BaseModel):
     message: str
     type: str
@@ -1014,6 +1018,60 @@ def mark_notifications_as_read():
     finally:
         if conn:
             conn.close()
+
+@app.put("/stock/{product_name}/{product_type}")
+def update_stock(product_name: str, product_type: str, stock_update: StockUpdate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Check if the stock item exists
+        cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        stock_item = cursor.fetchone()
+        if not stock_item:
+            raise HTTPException(status_code=404, detail="Stock item not found")
+
+        # Update the stock item
+        cursor.execute('''
+            UPDATE stock
+            SET quantity = %s, price_per_unit = %s
+            WHERE product_name = %s AND product_type = %s
+        ''', (stock_update.quantity, stock_update.price_per_unit, product_name, product_type))
+        conn.commit()
+        return {"message": "Stock updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating stock: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update stock: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/stock/{product_name}/{product_type}")
+def delete_stock(product_name: str, product_type: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        stock_item = cursor.fetchone()
+        if not stock_item:
+            raise HTTPException(status_code=404, detail="Stock item not found")
+
+        cursor.execute('DELETE FROM stock WHERE product_name = %s AND product_type = %s', (product_name, product_type))
+        conn.commit()
+        return {"message": "Stock item deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting stock item: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete stock item")
+    finally:
+        if conn:
+            conn.close()
+
             
 # Run the application
 if __name__ == "__main__":
