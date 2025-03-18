@@ -120,6 +120,8 @@ def init_db():
         # Drop and recreate tables to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
         cursor.execute('DROP TABLE IF EXISTS tasks')
+        cursor.execute('DROP TABLE IF EXISTS stock')
+        
 
 
         cursor.execute('''
