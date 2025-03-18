@@ -31,18 +31,15 @@ def get_db():
     return conn
 
 # Pydantic models
-class TaskStatusUpdate(BaseModel):
-    status: str 
-    
 class Task(BaseModel):
     title: str
     content: str
-    date: date
-    status: str  # "Pending", "Ongoing", "Completed"
+    date: str
+    status: str  # "pending", "ongoing", "completed"
 
 class DiaryEntry(BaseModel):
     content: str
-    date: date
+    date: str
     
 class StockUpdate(BaseModel):
     quantity: int
@@ -209,13 +206,12 @@ def init_db():
                 is_read BOOLEAN DEFAULT FALSE  -- Track read/unread status
             )
         ''')
-        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tasks (
                 id SERIAL PRIMARY KEY,
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
-                date DATE NOT NULL,
+                date TEXT NOT NULL,
                 status TEXT NOT NULL
             )
         ''')
@@ -224,7 +220,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS diary_entries (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
-                date DATE NOT NULL,
+                date TEXT NOT NULL
             )
         ''')
         
@@ -1215,7 +1211,7 @@ def get_tasks():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM tasks ORDER BY date DESC')
+        cursor.execute('SELECT * FROM tasks')
         tasks = cursor.fetchall()
         return {"tasks": [dict(zip([col[0] for col in cursor.description], row)) for row in tasks]}
     except Exception as e:
@@ -1226,23 +1222,16 @@ def get_tasks():
             conn.close()
 
 @app.put("/tasks/{task_id}/status")
-def update_task_status(task_id: int, status_update: TaskStatusUpdate):
+def update_task_status(task_id: int, status: str):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
-
-        # Validate the status
-        if status_update.status not in ["Pending", "Ongoing", "Completed"]:
-            raise HTTPException(status_code=400, detail="Invalid status")
-
-        # Update the task status
         cursor.execute('''
             UPDATE tasks
             SET status = %s
             WHERE id = %s
-        ''', (status_update.status, task_id))
-
+        ''', (status, task_id))
         conn.commit()
         return {"message": "Task status updated successfully"}
     except Exception as e:
