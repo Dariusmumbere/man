@@ -1211,6 +1211,13 @@ def update_task_status(task_id: int, status: str):
     conn = get_db()
     cursor = conn.cursor()
     try:
+        # Check if the task exists
+        cursor.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+        task = cursor.fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Update the task status
         cursor.execute(
             "UPDATE tasks SET status = %s WHERE id = %s",
             (status, task_id)
@@ -1223,12 +1230,19 @@ def update_task_status(task_id: int, status: str):
     finally:
         cursor.close()
         conn.close()
-
+        
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int):
     conn = get_db()
     cursor = conn.cursor()
     try:
+        # Check if the task exists
+        cursor.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+        task = cursor.fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Delete the task
         cursor.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
         conn.commit()
         return {"message": "Task deleted successfully!"}
