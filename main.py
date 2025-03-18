@@ -6,7 +6,7 @@ import psycopg2
 import logging
 import json
 from typing import List, Optional
-from datetime import datetime
+from datetime import date,datetime
 
 app = FastAPI()
 
@@ -40,7 +40,8 @@ class Task(BaseModel):
     id: int
     title: str
     content: str
-    status: str  
+    date: date
+    status: str  # pending, ongoing, completed
     
 class StockUpdate(BaseModel):
     quantity: int
