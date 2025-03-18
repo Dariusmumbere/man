@@ -1239,6 +1239,24 @@ def delete_task(task_id: int):
         cursor.close()
         conn.close()
 
+@app.get("/products/{product_name}/{product_type}")
+def get_product_by_name_and_type(product_name: str, product_type: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM products WHERE name = %s AND type = %s', (product_name, product_type))
+        product = cursor.fetchone()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return dict(zip([col[0] for col in cursor.description], product))
+    except Exception as e:
+        logger.error(f"Error fetching product: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch product")
+    finally:
+        if conn:
+            conn.close()
+
             
 # Run the application
 if __name__ == "__main__":
