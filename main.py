@@ -31,6 +31,11 @@ def get_db():
     return conn
 
 # Pydantic models
+class TaskCreate(BaseModel):
+    title: str
+    content: str
+    task_date: date
+    
 class DiaryEntry(BaseModel):
     entry: str
     created_at: datetime = datetime.now()
@@ -1169,17 +1174,17 @@ def get_diary_entries():
         conn.close()
 
 @app.post("/api/tasks")
-def create_task(title: str, content: str, task_date: date):
+def create_task(task: TaskCreate):
     conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute(
             "INSERT INTO tasks (title, content, date, status) VALUES (%s, %s, %s, 'pending') RETURNING id",
-            (title, content, task_date)
+            (task.title, task.content, task.task_date)
         )
         task_id = cursor.fetchone()[0]
         conn.commit()
-        return {"id": task_id, "title": title, "content": content, "date": task_date, "status": "pending"}
+        return {"id": task_id, "title": task.title, "content": task.content, "date": task.task_date, "status": "pending"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
