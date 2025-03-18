@@ -31,22 +31,15 @@ def get_db():
     return conn
 
 # Pydantic models
-class TaskCreate(BaseModel):
-    title: str
-    content: str
-    task_date: date
-    
-class DiaryEntry(BaseModel):
-    entry: str
-    created_at: datetime = datetime.now()
-
-# Task Model
 class Task(BaseModel):
-    id: int
     title: str
     content: str
     date: date
-    status: str  # pending, ongoing, completed
+    status: str  # "Pending", "Ongoing", "Completed"
+
+class DiaryEntry(BaseModel):
+    content: str
+    date: date
     
 class StockUpdate(BaseModel):
     quantity: int
@@ -123,9 +116,6 @@ def init_db():
         conn = get_db()
         cursor = conn.cursor()
         # Drop and recreate tables to ensure the correct schema
-        cursor.execute('DROP TABLE IF EXISTS diary_entries')
-        cursor.execute('DROP TABLE IF EXISTS tasks')
-        cursor.execute('DROP TABLE IF EXISTS stock')
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
@@ -216,22 +206,23 @@ def init_db():
                 is_read BOOLEAN DEFAULT FALSE  -- Track read/unread status
             )
         ''')
+        
         cursor.execute('''
-            CREATE TABLE diary_entries (
-                id SERIAL PRIMARY KEY,
-                entry TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE tasks (
+            CREATE TABLE IF NOT EXISTS tasks (
                 id SERIAL PRIMARY KEY,
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
                 date DATE NOT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'pending'
-           )
+                status TEXT NOT NULL
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS diary_entries (
+                id SERIAL PRIMARY KEY,
+                content TEXT NOT NULL,
+                date DATE NOT NULL
+            )
         ''')
         
         # Initialize the balance to 0 if the table is empty
@@ -1142,118 +1133,6 @@ def increment_stock(product_name: str, product_type: str):
         if conn:
             conn.close()
 
-@app.post("/api/diary")
-def save_diary(entry: DiaryEntry):
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO diary_entries (entry, created_at) VALUES (%s, %s)",
-            (entry.entry, entry.created_at)
-        )
-        conn.commit()
-        return {"message": "Diary entry saved successfully!"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to save diary entry: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/api/diary")
-def get_diary_entries():
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM diary_entries ORDER BY created_at DESC")
-        entries = cursor.fetchall()
-        return {"entries": [dict(zip([col[0] for col in cursor.description], row)) for row in entries]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch diary entries: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.post("/api/tasks")
-def create_task(task: TaskCreate):
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO tasks (title, content, date, status) VALUES (%s, %s, %s, 'pending') RETURNING id",
-            (task.title, task.content, task.task_date)
-        )
-        task_id = cursor.fetchone()[0]
-        conn.commit()
-        return {"id": task_id, "title": task.title, "content": task.content, "date": task.task_date, "status": "pending"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/api/tasks")
-def get_tasks():
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM tasks ORDER BY date ASC")
-        tasks = cursor.fetchall()
-        return {"tasks": [dict(zip([col[0] for col in cursor.description], row)) for row in tasks]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch tasks: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.put("/api/tasks/{task_id}")
-def update_task_status(task_id: int, status: str):
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        # Check if the task exists
-        cursor.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-        task = cursor.fetchone()
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        # Update the task status
-        cursor.execute(
-            "UPDATE tasks SET status = %s WHERE id = %s",
-            (status, task_id)
-        )
-        conn.commit()
-        return {"message": "Task status updated successfully!"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to update task status: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
-        
-@app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: int):
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        # Check if the task exists
-        cursor.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-        task = cursor.fetchone()
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        # Delete the task
-        cursor.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
-        conn.commit()
-        return {"message": "Task deleted successfully!"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete task: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
-
 @app.get("/products/{product_name}/{product_type}")
 def get_product_by_name_and_type(product_name: str, product_type: str):
     conn = None
@@ -1302,6 +1181,103 @@ def decrement_stock(product_name: str, product_type: str):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to decrement stock: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/tasks/")
+def add_task(task: Task):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO tasks (title, content, date, status)
+            VALUES (%s, %s, %s, %s)
+        ''', (task.title, task.content, task.date, task.status))
+        conn.commit()
+        return {"message": "Task added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding task: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add task: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/tasks/")
+def get_tasks():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM tasks ORDER BY date DESC')
+        tasks = cursor.fetchall()
+        return {"tasks": [dict(zip([col[0] for col in cursor.description], row)) for row in tasks]}
+    except Exception as e:
+        logger.error(f"Error fetching tasks: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch tasks")
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/tasks/{task_id}/status")
+def update_task_status(task_id: int, status: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE tasks
+            SET status = %s
+            WHERE id = %s
+        ''', (status, task_id))
+        conn.commit()
+        return {"message": "Task status updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating task status: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update task status: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+# Diary endpoints
+@app.post("/diary/")
+def add_diary_entry(entry: DiaryEntry):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO diary_entries (content, date)
+            VALUES (%s, %s)
+        ''', (entry.content, entry.date))
+        conn.commit()
+        return {"message": "Diary entry added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding diary entry: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add diary entry: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/diary/")
+def get_diary_entries():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM diary_entries ORDER BY date DESC')
+        entries = cursor.fetchall()
+        return {"entries": [dict(zip([col[0] for col in cursor.description], row)) for row in entries]}
+    except Exception as e:
+        logger.error(f"Error fetching diary entries: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch diary entries")
     finally:
         if conn:
             conn.close()
