@@ -40,8 +40,9 @@ class Task(BaseModel):
     id: int
     title: str
     content: str
-    date: date
+    date: str
     status: str  
+    
 class StockUpdate(BaseModel):
     quantity: int
     price_per_unit: float
