@@ -118,6 +118,9 @@ def init_db():
         conn = get_db()
         cursor = conn.cursor()
         # Drop and recreate tables to ensure the correct schema
+        cursor.execute('DROP TABLE IF EXISTS diary_entries')
+        cursor.execute('DROP TABLE IF EXISTS tasks')
+
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
