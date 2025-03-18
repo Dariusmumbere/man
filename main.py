@@ -120,14 +120,7 @@ def init_db():
         # Drop and recreate tables to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
         cursor.execute('DROP TABLE IF EXISTS tasks')
-        cursor.execute('DROP TABLE IF EXISTS stock')
-        cursor.execute('DROP TABLE IF EXISTS bank_account')
-        cursor.execute('DROP TABLE IF EXISTS transactions')
-        cursor.execute('DROP TABLE IF EXISTS notifications')
         
-        
-
-
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
@@ -1144,66 +1137,102 @@ def increment_stock(product_name: str, product_type: str):
             conn.close()
 
 @app.post("/api/diary")
-async def save_diary(entry: DiaryEntry):
-    conn = await get_db()
+def save_diary(entry: DiaryEntry):
+    conn = get_db()
+    cursor = conn.cursor()
     try:
-        await conn.execute("INSERT INTO diary_entries (entry, created_at) VALUES ($1, $2)", entry.entry, entry.created_at)
-    finally:
-        await conn.close()
-    return {"message": "Diary entry saved successfully!"}
-
-# Fetch all diary entries
-@app.get("/api/diary")
-async def get_diary_entries():
-    conn = await get_db()
-    try:
-        entries = await conn.fetch("SELECT * FROM diary_entries ORDER BY created_at DESC")
-    finally:
-        await conn.close()
-    return entries
-
-# Create a new task
-@app.post("/api/tasks")
-async def create_task(title: str, content: str, task_date: date):
-    conn = await get_db()
-    try:
-        task_id = await conn.fetchval(
-            "INSERT INTO tasks (title, content, date, status) VALUES ($1, $2, $3, 'pending') RETURNING id",
-            title, content, task_date
+        cursor.execute(
+            "INSERT INTO diary_entries (entry, created_at) VALUES (%s, %s)",
+            (entry.entry, entry.created_at)
         )
+        conn.commit()
+        return {"message": "Diary entry saved successfully!"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save diary entry: {str(e)}")
     finally:
-        await conn.close()
-    return {"id": task_id, "title": title, "content": content, "date": task_date, "status": "pending"}
+        cursor.close()
+        conn.close()
 
-# Fetch all tasks
+@app.get("/api/diary")
+def get_diary_entries():
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM diary_entries ORDER BY created_at DESC")
+        entries = cursor.fetchall()
+        return {"entries": [dict(zip([col[0] for col in cursor.description], row)) for row in entries]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch diary entries: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.post("/api/tasks")
+def create_task(title: str, content: str, task_date: date):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO tasks (title, content, date, status) VALUES (%s, %s, %s, 'pending') RETURNING id",
+            (title, content, task_date)
+        )
+        task_id = cursor.fetchone()[0]
+        conn.commit()
+        return {"id": task_id, "title": title, "content": content, "date": task_date, "status": "pending"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
 @app.get("/api/tasks")
-async def get_tasks():
-    conn = await get_db()
+def get_tasks():
+    conn = get_db()
+    cursor = conn.cursor()
     try:
-        tasks = await conn.fetch("SELECT * FROM tasks ORDER BY date ASC")
+        cursor.execute("SELECT * FROM tasks ORDER BY date ASC")
+        tasks = cursor.fetchall()
+        return {"tasks": [dict(zip([col[0] for col in cursor.description], row)) for row in tasks]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch tasks: {str(e)}")
     finally:
-        await conn.close()
-    return tasks
+        cursor.close()
+        conn.close()
 
-# Update task status
 @app.put("/api/tasks/{task_id}")
-async def update_task_status(task_id: int, status: str):
-    conn = await get_db()
+def update_task_status(task_id: int, status: str):
+    conn = get_db()
+    cursor = conn.cursor()
     try:
-        await conn.execute("UPDATE tasks SET status = $1 WHERE id = $2", status, task_id)
+        cursor.execute(
+            "UPDATE tasks SET status = %s WHERE id = %s",
+            (status, task_id)
+        )
+        conn.commit()
+        return {"message": "Task status updated successfully!"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update task status: {str(e)}")
     finally:
-        await conn.close()
-    return {"message": "Task status updated successfully!"}
+        cursor.close()
+        conn.close()
 
-# Delete a task
 @app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: int):
-    conn = await get_db()
+def delete_task(task_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
     try:
-        await conn.execute("DELETE FROM tasks WHERE id = $1", task_id)
+        cursor.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+        conn.commit()
+        return {"message": "Task deleted successfully!"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete task: {str(e)}")
     finally:
-        await conn.close()
-    return {"message": "Task deleted successfully!"}
+        cursor.close()
+        conn.close()
 
             
 # Run the application
