@@ -31,6 +31,9 @@ def get_db():
     return conn
 
 # Pydantic models
+class TaskStatusUpdate(BaseModel):
+    status: str 
+    
 class Task(BaseModel):
     title: str
     content: str
@@ -1223,16 +1226,23 @@ def get_tasks():
             conn.close()
 
 @app.put("/tasks/{task_id}/status")
-def update_task_status(task_id: int, status: str):
+def update_task_status(task_id: int, status_update: TaskStatusUpdate):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
+
+        # Validate the status
+        if status_update.status not in ["Pending", "Ongoing", "Completed"]:
+            raise HTTPException(status_code=400, detail="Invalid status")
+
+        # Update the task status
         cursor.execute('''
             UPDATE tasks
             SET status = %s
             WHERE id = %s
-        ''', (status, task_id))
+        ''', (status_update.status, task_id))
+
         conn.commit()
         return {"message": "Task status updated successfully"}
     except Exception as e:
