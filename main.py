@@ -31,6 +31,17 @@ def get_db():
     return conn
 
 # Pydantic models
+class DiaryEntry(BaseModel):
+    entry: str
+    created_at: datetime = datetime.now()
+
+# Task Model
+class Task(BaseModel):
+    id: int
+    title: str
+    content: str
+    date: date
+    status: str  
 class StockUpdate(BaseModel):
     quantity: int
     price_per_unit: float
@@ -196,7 +207,24 @@ def init_db():
                 is_read BOOLEAN DEFAULT FALSE  -- Track read/unread status
             )
         ''')
-            
+        cursor.execute('''
+            CREATE TABLE diary_entries (
+                id SERIAL PRIMARY KEY,
+                entry TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE tasks (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                date DATE NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending'
+           )
+        ''')
+        
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
         if cursor.fetchone()[0] == 0:
@@ -210,6 +238,8 @@ def init_db():
     finally:
         if conn:
             conn.close()
+
+
 
 # Initialize database
 init_db()
@@ -1102,6 +1132,68 @@ def increment_stock(product_name: str, product_type: str):
     finally:
         if conn:
             conn.close()
+
+@app.post("/api/diary")
+async def save_diary(entry: DiaryEntry):
+    conn = await get_db()
+    try:
+        await conn.execute("INSERT INTO diary_entries (entry, created_at) VALUES ($1, $2)", entry.entry, entry.created_at)
+    finally:
+        await conn.close()
+    return {"message": "Diary entry saved successfully!"}
+
+# Fetch all diary entries
+@app.get("/api/diary")
+async def get_diary_entries():
+    conn = await get_db()
+    try:
+        entries = await conn.fetch("SELECT * FROM diary_entries ORDER BY created_at DESC")
+    finally:
+        await conn.close()
+    return entries
+
+# Create a new task
+@app.post("/api/tasks")
+async def create_task(title: str, content: str, task_date: date):
+    conn = await get_db()
+    try:
+        task_id = await conn.fetchval(
+            "INSERT INTO tasks (title, content, date, status) VALUES ($1, $2, $3, 'pending') RETURNING id",
+            title, content, task_date
+        )
+    finally:
+        await conn.close()
+    return {"id": task_id, "title": title, "content": content, "date": task_date, "status": "pending"}
+
+# Fetch all tasks
+@app.get("/api/tasks")
+async def get_tasks():
+    conn = await get_db()
+    try:
+        tasks = await conn.fetch("SELECT * FROM tasks ORDER BY date ASC")
+    finally:
+        await conn.close()
+    return tasks
+
+# Update task status
+@app.put("/api/tasks/{task_id}")
+async def update_task_status(task_id: int, status: str):
+    conn = await get_db()
+    try:
+        await conn.execute("UPDATE tasks SET status = $1 WHERE id = $2", status, task_id)
+    finally:
+        await conn.close()
+    return {"message": "Task status updated successfully!"}
+
+# Delete a task
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: int):
+    conn = await get_db()
+    try:
+        await conn.execute("DELETE FROM tasks WHERE id = $1", task_id)
+    finally:
+        await conn.close()
+    return {"message": "Task deleted successfully!"}
 
             
 # Run the application
