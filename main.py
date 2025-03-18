@@ -39,7 +39,6 @@ class Task(BaseModel):
 
 class DiaryEntry(BaseModel):
     content: str
-    date: date
     
 class StockUpdate(BaseModel):
     quantity: int
@@ -221,7 +220,6 @@ def init_db():
             CREATE TABLE IF NOT EXISTS diary_entries (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
-                date DATE NOT NULL
             )
         ''')
         
