@@ -122,6 +122,9 @@ def init_db():
         cursor.execute('DROP TABLE IF EXISTS tasks')
         cursor.execute('DROP TABLE IF EXISTS stock')
         cursor.execute('DROP TABLE IF EXISTS bank_account')
+        cursor.execute('DROP TABLE IF EXISTS transactions')
+        cursor.execute('DROP TABLE IF EXISTS notifications')
+        
         
 
 
