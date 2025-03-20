@@ -40,6 +40,9 @@ class Task(BaseModel):
 class DiaryEntry(BaseModel):
     content: str
     date: str
+
+class TaskStatusUpdate(BaseModel):
+    status: str
     
 class StockUpdate(BaseModel):
     quantity: int
@@ -115,6 +118,7 @@ def init_db():
     try:
         conn = get_db()
         cursor = conn.cursor()
+        cursor.execute('DROP TABLE IF EXISTS diary_entries')
         # Drop and recreate tables to ensure the correct schema
         
         cursor.execute('''
@@ -217,12 +221,12 @@ def init_db():
         ''')
         
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS diary_entries (
-                id SERIAL PRIMARY KEY,
-                content TEXT NOT NULL,
-                date TEXT NOT NULL
-            )
-        ''')
+    CREATE TABLE diary_entries (
+        id SERIAL PRIMARY KEY,
+        content TEXT NOT NULL,
+        date TEXT NOT NULL
+    )
+''')
         
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
@@ -1222,8 +1226,8 @@ def get_tasks():
             conn.close()
 
 @app.put("/tasks/{task_id}/status")
-def update_task_status(task_id: int, status: str):
-    if status not in ["pending", "ongoing", "completed"]:
+def update_task_status(task_id: int, task_status: TaskStatusUpdate):
+    if task_status.status not in ["pending", "ongoing", "completed"]:
         raise HTTPException(status_code=400, detail="Invalid status. Must be 'pending', 'ongoing', or 'completed'")
 
     conn = None
@@ -1234,7 +1238,7 @@ def update_task_status(task_id: int, status: str):
             UPDATE tasks
             SET status = %s
             WHERE id = %s
-        ''', (status, task_id))
+        ''', (task_status.status, task_id))
         conn.commit()
         return {"message": "Task status updated successfully"}
     except Exception as e:
@@ -1245,7 +1249,7 @@ def update_task_status(task_id: int, status: str):
     finally:
         if conn:
             conn.close()
-
+            
 # Diary endpoints
 @app.post("/diary/")
 def add_diary_entry(entry: DiaryEntry):
