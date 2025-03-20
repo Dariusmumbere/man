@@ -1223,6 +1223,9 @@ def get_tasks():
 
 @app.put("/tasks/{task_id}/status")
 def update_task_status(task_id: int, status: str):
+    if status not in ["pending", "ongoing", "completed"]:
+        raise HTTPException(status_code=400, detail="Invalid status. Must be 'pending', 'ongoing', or 'completed'")
+
     conn = None
     try:
         conn = get_db()
@@ -1246,6 +1249,11 @@ def update_task_status(task_id: int, status: str):
 # Diary endpoints
 @app.post("/diary/")
 def add_diary_entry(entry: DiaryEntry):
+    try:
+        datetime.strptime(entry.date, "%Y-%m-%d")  # Validate date format
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use 'YYYY-MM-DD'")
+
     conn = None
     try:
         conn = get_db()
