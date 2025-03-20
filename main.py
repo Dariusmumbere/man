@@ -1280,7 +1280,49 @@ def get_diary_entries():
     finally:
         if conn:
             conn.close()
+            
+@app.get("/gross_profit/")
+def get_gross_profit():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
 
+        # 1. Fetch total sales revenue
+        cursor.execute('SELECT SUM(total_amount) FROM sales')
+        total_sales_revenue = cursor.fetchone()[0] or 0
+
+        # 2. Fetch total cost of goods sold (COGS)
+        # For products: quantity * buying_price
+        cursor.execute('''
+            SELECT SUM((item->>'quantity')::int * p.buying_price)
+            FROM sales, jsonb_array_elements(items) AS item
+            JOIN products p ON p.name = item->>'name'
+            WHERE item->>'type' = 'product'
+        ''')
+        total_cogs_products = cursor.fetchone()[0] or 0
+
+        # For services: quantity * unit_price * 0.7 (since services have a 30% profit margin)
+        cursor.execute('''
+            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float * 0.7)
+            FROM sales, jsonb_array_elements(items) AS item
+            WHERE item->>'type' = 'service'
+        ''')
+        total_cogs_services = cursor.fetchone()[0] or 0
+
+        # Total COGS = COGS for products + COGS for services
+        total_cogs = total_cogs_products + total_cogs_services
+
+        # 3. Calculate gross profit
+        gross_profit = total_sales_revenue - total_cogs
+
+        return {"gross_profit": gross_profit}
+    except Exception as e:
+        logger.error(f"Error calculating gross profit: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate gross profit")
+    finally:
+        if conn:
+            conn.close()
             
 # Run the application
 if __name__ == "__main__":
