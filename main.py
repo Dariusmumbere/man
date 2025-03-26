@@ -733,12 +733,23 @@ def create_sale(sale: Sale):
             conn.close()
             
 @app.get("/sales/")
-def get_sales():
+def get_sales(date: str = None):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM sales ORDER BY created_at DESC')
+        
+        if date:
+            # Filter sales by the specified date
+            cursor.execute('''
+                SELECT * FROM sales 
+                WHERE DATE(created_at) = %s
+                ORDER BY created_at DESC
+            ''', (date,))
+        else:
+            # Get all sales if no date filter
+            cursor.execute('SELECT * FROM sales ORDER BY created_at DESC')
+            
         sales = cursor.fetchall()
         return {"sales": [dict(zip([col[0] for col in cursor.description], row)) for row in sales]}
     except Exception as e:
