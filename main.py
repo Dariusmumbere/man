@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -7,8 +8,6 @@ import logging
 import json
 from typing import List, Optional
 from datetime import date,datetime
-from fastapi import WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
 from typing import Dict
 
 app = FastAPI()
@@ -114,6 +113,13 @@ class Expense(BaseModel):
     description: str
     cost: float
     quantity: int    
+
+class Message(BaseModel):
+    sender: str  # "sales" or "management"
+    recipient: str  # "sales" or "management"
+    content: str
+    timestamp: Optional[datetime] = None
+    is_read: Optional[bool] = False
 
 class ConnectionManager:
     def __init__(self):
