@@ -114,13 +114,6 @@ class Expense(BaseModel):
     cost: float
     quantity: int    
 
-class Message(BaseModel):
-    sender: str  # "sales" or "management"
-    recipient: str  # "sales" or "management"
-    content: str
-    timestamp: Optional[datetime] = None
-    is_read: Optional[bool] = False
-
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -142,6 +135,18 @@ class ConnectionManager:
             await connection.send_text(message)
 
 manager = ConnectionManager()
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle the message (you can parse JSON here if needed)
+            await manager.broadcast(f"User {user_id}: {data}")
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+        await manager.broadcast(f"User {user_id} left the chat")
 
     
 # Initialize database tables
@@ -1379,63 +1384,6 @@ def get_gross_profit():
         if conn:
             conn.close()
 
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    await manager.connect(websocket, user_id)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            # Handle incoming messages if needed
-    except WebSocketDisconnect:
-        manager.disconnect(user_id)
-        await manager.broadcast(f"User {user_id} left the chat")
-
-# Update your message endpoint to use WebSockets
-@app.post("/messages/")
-async def send_message(message: Message):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO messages (sender, recipient, content)
-            VALUES (%s, %s, %s)
-            RETURNING id, timestamp
-        ''', (message.sender, message.recipient, message.content))
-        
-        message_data = cursor.fetchone()
-        message_id = message_data[0]
-        timestamp = message_data[1]
-        
-        # Create a notification for the new message
-        notification_message = f"New message from {message.sender}"
-        cursor.execute('''
-            INSERT INTO notifications (message, type)
-            VALUES (%s, 'message')
-        ''', (notification_message,))
-        
-        conn.commit()
-        
-        # Send the message via WebSocket
-        message_response = {
-            "id": message_id,
-            "sender": message.sender,
-            "recipient": message.recipient,
-            "content": message.content,
-            "timestamp": timestamp.isoformat(),
-            "is_read": False
-        }
-        await manager.send_personal_message(json.dumps(message_response), message.recipient)
-        
-        return {"message": "Message sent successfully", "data": message_response}
-    except Exception as e:
-        logger.error(f"Error sending message: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
-    finally:
-        if conn:
-            conn.close()
             
 # Run the application
 if __name__ == "__main__":
