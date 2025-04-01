@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,9 +9,6 @@ import json
 from typing import List, Optional
 from datetime import date,datetime
 from typing import Dict
-import uuid
-from pathlib import Path
-
 
 app = FastAPI()
 
@@ -36,16 +33,6 @@ def get_db():
     return conn
 
 # Pydantic models
-class FundraisingDocument(BaseModel):
-    id: Optional[int] = None
-    title: str
-    type: str  # proposal, grant_application, donor_report, budget, financial_report
-    status: str  # draft, submitted, approved, rejected
-    date: str
-    amount: Optional[float] = None
-    donor: Optional[str] = None
-    description: Optional[str] = None
-    file_url: Optional[str] = None
     
 class Task(BaseModel):
     title: str
@@ -247,20 +234,7 @@ def init_db():
         date TEXT NOT NULL
     )
 ''')
-        cursor.execute('''
-    CREATE TABLE IF NOT EXISTS fundraising_documents (
-        id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        type TEXT NOT NULL,
-        status TEXT NOT NULL,
-        date TEXT NOT NULL,
-        amount REAL,
-        donor TEXT,
-        description TEXT,
-        file_url TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-''')
+        
         
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
@@ -1380,253 +1354,6 @@ def get_gross_profit():
     finally:
         if conn:
             conn.close()
-
-@app.post("/api/fundraising/documents", response_model=FundraisingDocument)
-async def create_fundraising_document(
-    title: str = Form(...),
-    type: str = Form(...),
-    status: str = Form(...),
-    date: str = Form(...),
-    amount: Optional[float] = Form(None),
-    donor: Optional[str] = Form(None),
-    description: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None)
-):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        file_url = None
-        if file:
-            # Generate a unique filename
-            file_ext = file.filename.split('.')[-1]
-            filename = f"{uuid.uuid4()}.{file_ext}"
-            file_path = os.path.join(UPLOAD_DIR, filename)
-            
-            # Save the file
-            with open(file_path, "wb") as buffer:
-                buffer.write(await file.read())
-            
-            file_url = f"/uploads/fundraising/{filename}"
-        
-        cursor.execute('''
-            INSERT INTO fundraising_documents 
-            (title, type, status, date, amount, donor, description, file_url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        ''', (title, type, status, date, amount, donor, description, file_url))
-        
-        document_id = cursor.fetchone()[0]
-        conn.commit()
-        
-        return {
-            "id": document_id,
-            "title": title,
-            "type": type,
-            "status": status,
-            "date": date,
-            "amount": amount,
-            "donor": donor,
-            "description": description,
-            "file_url": file_url
-        }
-    except Exception as e:
-        logger.error(f"Error creating fundraising document: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to create fundraising document")
-    finally:
-        if conn:
-            conn.close()
-
-@app.get("/api/fundraising/documents", response_model=List[FundraisingDocument])
-def get_fundraising_documents():
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, title, type, status, date, amount, donor, description, file_url
-            FROM fundraising_documents
-            ORDER BY date DESC
-        ''')
-        documents = cursor.fetchall()
-        return [
-            {
-                "id": doc[0],
-                "title": doc[1],
-                "type": doc[2],
-                "status": doc[3],
-                "date": doc[4],
-                "amount": doc[5],
-                "donor": doc[6],
-                "description": doc[7],
-                "file_url": doc[8]
-            }
-            for doc in documents
-        ]
-    except Exception as e:
-        logger.error(f"Error fetching fundraising documents: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch fundraising documents")
-    finally:
-        if conn:
-            conn.close()
-
-@app.get("/api/fundraising/documents/{document_id}", response_model=FundraisingDocument)
-def get_fundraising_document(document_id: int):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, title, type, status, date, amount, donor, description, file_url
-            FROM fundraising_documents
-            WHERE id = %s
-        ''', (document_id,))
-        document = cursor.fetchone()
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        return {
-            "id": document[0],
-            "title": document[1],
-            "type": document[2],
-            "status": document[3],
-            "date": document[4],
-            "amount": document[5],
-            "donor": document[6],
-            "description": document[7],
-            "file_url": document[8]
-        }
-    except Exception as e:
-        logger.error(f"Error fetching fundraising document: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch fundraising document")
-    finally:
-        if conn:
-            conn.close()
-
-@app.put("/api/fundraising/documents/{document_id}", response_model=FundraisingDocument)
-async def update_fundraising_document(
-    document_id: int,
-    title: str = Form(...),
-    type: str = Form(...),
-    status: str = Form(...),
-    date: str = Form(...),
-    amount: Optional[float] = Form(None),
-    donor: Optional[str] = Form(None),
-    description: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None)
-):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # First get the current document to check if it has a file
-        cursor.execute('SELECT file_url FROM fundraising_documents WHERE id = %s', (document_id,))
-        current_document = cursor.fetchone()
-        if not current_document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        current_file_url = current_document[0]
-        file_url = current_file_url
-        
-        if file:
-            # If there's an existing file, delete it first
-            if current_file_url:
-                try:
-                    file_path = os.path.join(UPLOAD_DIR, current_file_url.split('/')[-1])
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception as e:
-                    logger.error(f"Error deleting old file: {e}")
-            
-            # Save the new file
-            file_ext = file.filename.split('.')[-1]
-            filename = f"{uuid.uuid4()}.{file_ext}"
-            file_path = os.path.join(UPLOAD_DIR, filename)
-            
-            with open(file_path, "wb") as buffer:
-                buffer.write(await file.read())
-            
-            file_url = f"/uploads/fundraising/{filename}"
-        
-        cursor.execute('''
-            UPDATE fundraising_documents
-            SET title = %s, type = %s, status = %s, date = %s, 
-                amount = %s, donor = %s, description = %s, file_url = %s
-            WHERE id = %s
-            RETURNING id, title, type, status, date, amount, donor, description, file_url
-        ''', (title, type, status, date, amount, donor, description, file_url, document_id))
-        
-        updated_document = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "id": updated_document[0],
-            "title": updated_document[1],
-            "type": updated_document[2],
-            "status": updated_document[3],
-            "date": updated_document[4],
-            "amount": updated_document[5],
-            "donor": updated_document[6],
-            "description": updated_document[7],
-            "file_url": updated_document[8]
-        }
-    except Exception as e:
-        logger.error(f"Error updating fundraising document: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to update fundraising document")
-    finally:
-        if conn:
-            conn.close()
-
-@app.delete("/api/fundraising/documents/{document_id}")
-def delete_fundraising_document(document_id: int):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # First get the document to check if it has a file
-        cursor.execute('SELECT file_url FROM fundraising_documents WHERE id = %s', (document_id,))
-        document = cursor.fetchone()
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        # Delete the associated file if it exists
-        file_url = document[0]
-        if file_url:
-            try:
-                file_path = os.path.join(UPLOAD_DIR, file_url.split('/')[-1])
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-            except Exception as e:
-                logger.error(f"Error deleting file: {e}")
-        
-        # Delete the document from the database
-        cursor.execute('DELETE FROM fundraising_documents WHERE id = %s', (document_id,))
-        conn.commit()
-        
-        return {"message": "Document deleted successfully"}
-    except Exception as e:
-        logger.error(f"Error deleting fundraising document: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete fundraising document")
-    finally:
-        if conn:
-            conn.close()
-
-# Add this route to serve uploaded files
-@app.get("/uploads/fundraising/{filename}")
-async def get_uploaded_file(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path)
 
             
 # Run the application
