@@ -1,6 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import os
 import psycopg2
@@ -9,6 +11,8 @@ import json
 from typing import List, Optional
 from datetime import date,datetime
 from typing import Dict
+from pathlib import Path
+import uuid
 
 app = FastAPI()
 
@@ -33,6 +37,12 @@ def get_db():
     return conn
 
 # Pydantic models
+class FolderCreate(BaseModel):
+    name: str
+    parent_folder: Optional[str] = None
+
+class FileRename(BaseModel):
+    name: str
     
 class Task(BaseModel):
     title: str
@@ -1355,7 +1365,188 @@ def get_gross_profit():
         if conn:
             conn.close()
 
+@app.get("/files")
+async def get_files(folder: str = None):
+    """List files and folders in the specified directory"""
+    try:
+        folder_path = Path(UPLOAD_DIR) / folder if folder else Path(UPLOAD_DIR)
+        
+        if not folder_path.exists():
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        folders = []
+        files = []
+        
+        for item in folder_path.iterdir():
+            if item.is_dir():
+                folders.append({
+                    "id": str(item.name),
+                    "name": str(item.name),
+                    "type": "folder"
+                })
+            else:
+                files.append({
+                    "id": str(item.name),
+                    "name": str(item.name),
+                    "type": item.suffix[1:] if item.suffix else "file"
+                })
+        
+        return {"folders": folders, "files": files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload")
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    folder: str = Form(None)
+):
+    """Handle file uploads"""
+    try:
+        upload_dir = Path(UPLOAD_DIR)
+        if folder:
+            upload_dir = upload_dir / folder
+        
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        uploaded_files = []
+        
+        for file in files:
+            # Generate a unique filename to prevent collisions
+            file_ext = Path(file.filename).suffix
+            unique_filename = f"{uuid.uuid4()}{file_ext}"
+            file_path = upload_dir / unique_filename
             
+            with open(file_path, "wb") as buffer:
+                buffer.write(await file.read())
+            
+            uploaded_files.append({
+                "id": unique_filename,
+                "name": file.filename,
+                "type": file_ext[1:] if file_ext else "file"
+            })
+        
+        return {"message": "Files uploaded successfully", "files": uploaded_files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/files/{file_id}/download")
+async def download_file(file_id: str, folder: str = None):
+    """Download a file"""
+    try:
+        file_path = Path(UPLOAD_DIR)
+        if folder:
+            file_path = file_path / folder
+        file_path = file_path / file_id
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        return FileResponse(str(file_path), filename=file_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/files/{file_id}")
+async def delete_file(file_id: str, folder: str = None):
+    """Delete a file"""
+    try:
+        file_path = Path(UPLOAD_DIR)
+        if folder:
+            file_path = file_path / folder
+        file_path = file_path / file_id
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_path.unlink()
+        return {"message": "File deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/files/{file_id}")
+async def rename_file(file_id: str, new_name: FileRename, folder: str = None):
+    """Rename a file"""
+    try:
+        file_path = Path(UPLOAD_DIR)
+        if folder:
+            file_path = file_path / folder
+        file_path = file_path / file_id
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        new_path = file_path.parent / new_name.name
+        file_path.rename(new_path)
+        
+        return {"message": "File renamed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/folders")
+async def create_folder(folder: FolderCreate):
+    """Create a new folder"""
+    try:
+        folder_path = Path(UPLOAD_DIR)
+        if folder.parent_folder:
+            folder_path = folder_path / folder.parent_folder
+        
+        folder_path = folder_path / folder.name
+        folder_path.mkdir(parents=True, exist_ok=True)
+        
+        return {
+            "id": folder.name,
+            "name": folder.name,
+            "message": "Folder created successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/folders/{folder_id}")
+async def rename_folder(folder_id: str, new_name: FolderCreate):
+    """Rename a folder"""
+    try:
+        folder_path = Path(UPLOAD_DIR)
+        if new_name.parent_folder:
+            folder_path = folder_path / new_name.parent_folder
+        
+        old_path = folder_path / folder_id
+        new_path = folder_path / new_name.name
+        
+        if not old_path.exists():
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        old_path.rename(new_path)
+        
+        return {"message": "Folder renamed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/folders/{folder_id}")
+async def delete_folder(folder_id: str, parent_folder: str = None):
+    """Delete a folder"""
+    try:
+        folder_path = Path(UPLOAD_DIR)
+        if parent_folder:
+            folder_path = folder_path / parent_folder
+        
+        folder_path = folder_path / folder_id
+        
+        if not folder_path.exists():
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        # Remove all contents recursively
+        for item in folder_path.glob("*"):
+            if item.is_file():
+                item.unlink()
+            else:
+                await delete_folder(item.name, folder_id)
+        
+        folder_path.rmdir()
+        return {"message": "Folder deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Run the application
 if __name__ == "__main__":
     import uvicorn
