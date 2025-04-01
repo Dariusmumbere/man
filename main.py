@@ -26,7 +26,7 @@ app.add_middleware(
 )
 
 # Database connection
-DATABASE_URL = https://hqfgomvumwnqmphkomku.supabase.co
+DATABASE_URL=os.getenv("DATABASE_URL", "postgresql://itech_l1q2_user:AoqQkrtzrQW7WEDOJdh0C6hhlY5Xe3sv@dpg-cuvnsbggph6c73ev87g0-a/itech_l1q2")
 
 def get_db():
     conn = psycopg2.connect(DATABASE_URL)
@@ -999,9 +999,9 @@ def get_net_profit():
         ''')
         total_cogs_products = cursor.fetchone()[0] or 0
 
-        # For services: quantity * unit_price * 0.7 (since services have a 30% profit margin)
+        # For services: quantity * unit_price * 0.5 (since services have a 30% profit margin)
         cursor.execute('''
-            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float * 0.7)
+            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float * 0.5)
             FROM sales, jsonb_array_elements(items) AS item
             WHERE item->>'type' = 'service'
         ''')
@@ -1362,9 +1362,9 @@ def get_gross_profit():
         ''')
         total_cogs_products = cursor.fetchone()[0] or 0
 
-        # For services: quantity * unit_price * 0.7 (since services have a 30% profit margin)
+        # For services: quantity * unit_price * 0.5 (since services have a 30% profit margin)
         cursor.execute('''
-            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float * 0.7)
+            SELECT SUM((item->>'quantity')::int * (item->>'unit_price')::float * 0.5)
             FROM sales, jsonb_array_elements(items) AS item
             WHERE item->>'type' = 'service'
         ''')
