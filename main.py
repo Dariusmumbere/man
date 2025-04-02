@@ -1550,6 +1550,166 @@ def download_file(file_id: str):
         if conn:
             conn.close()
 
+@app.put("/folders/{folder_id}")
+def rename_folder(folder_id: str, name: str = Form(...)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE folders
+            SET name = %s
+            WHERE id = %s
+            RETURNING id, name, parent_id
+        ''', (name, folder_id))
+        
+        updated_folder = cursor.fetchone()
+        if not updated_folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+            
+        conn.commit()
+        return {"id": updated_folder[0], "name": updated_folder[1], "parent_id": updated_folder[2]}
+    except Exception as e:
+        logger.error(f"Error renaming folder: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to rename folder")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/folders/{folder_id}")
+def delete_folder(folder_id: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if folder exists
+        cursor.execute('SELECT id FROM folders WHERE id = %s', (folder_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Folder not found")
+            
+        # Delete folder (cascade will handle files)
+        cursor.execute('DELETE FROM folders WHERE id = %s', (folder_id,))
+        conn.commit()
+        return {"message": "Folder deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting folder: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete folder")
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/files/{file_id}")
+def rename_file(file_id: str, name: str = Form(...)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE files
+            SET name = %s
+            WHERE id = %s
+            RETURNING id, name, type, size, folder_id
+        ''', (name, file_id))
+        
+        updated_file = cursor.fetchone()
+        if not updated_file:
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        conn.commit()
+        return {
+            "id": updated_file[0],
+            "name": updated_file[1],
+            "type": updated_file[2],
+            "size": updated_file[3],
+            "folder_id": updated_file[4]
+        }
+    except Exception as e:
+        logger.error(f"Error renaming file: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to rename file")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/files/{file_id}")
+def delete_file(file_id: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get file path before deleting
+        cursor.execute('SELECT path FROM files WHERE id = %s', (file_id,))
+        file_data = cursor.fetchone()
+        if not file_data:
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        # Delete from database
+        cursor.execute('DELETE FROM files WHERE id = %s', (file_id,))
+        
+        # Delete physical file
+        file_path = Path(file_data[0])
+        if file_path.exists():
+            file_path.unlink()
+            
+        conn.commit()
+        return {"message": "File deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete file")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/files/{file_id}/preview")
+def preview_file(file_id: str):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT name, path, type FROM files WHERE id = %s', (file_id,))
+        file_data = cursor.fetchone()
+        
+        if not file_data:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_name, file_path, file_type = file_data
+        file_path = Path(file_path)
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on server")
+        
+        # For images and PDFs, return the file directly
+        if file_type in ['image/jpeg', 'image/png', 'image/gif', 'application/pdf']:
+            return FileResponse(
+                file_path,
+                filename=file_name,
+                media_type=file_type
+            )
+        else:
+            # For other types, return a download response
+            return FileResponse(
+                file_path,
+                filename=file_name,
+                media_type='application/octet-stream'
+            )
+    except Exception as e:
+        logger.error(f"Error previewing file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to preview file")
+    finally:
+        if conn:
+            conn.close()
+
 # Run the application
 if __name__ == "__main__":
     import uvicorn
