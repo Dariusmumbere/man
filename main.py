@@ -300,11 +300,6 @@ def init_db():
         if conn:
             conn.close()
 
-
-
-# Initialize database
-init_db()
-
 # Product endpoints
 @app.post("/products/")
 def add_product(product: Product):
