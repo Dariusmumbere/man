@@ -299,7 +299,7 @@ def init_db():
     finally:
         if conn:
             conn.close()
-
+            
 # Product endpoints
 @app.post("/products/")
 def add_product(product: Product):
