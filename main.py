@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import UploadFile, File, Form
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import os
 import psycopg2
 import logging
@@ -139,7 +139,7 @@ class FolderContents(BaseModel):
     files: List[FileItem]
 
 class FolderCreate(BaseModel):
-    name: str = Field(..., min_length=1)
+    name: str
     parent_id: Optional[str] = None
 
 
