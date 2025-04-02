@@ -1446,14 +1446,22 @@ def get_folder_contents(folder_id: str = "root"):
         cursor = conn.cursor()
         
         # Get subfolders
-        cursor.execute('SELECT id, name, parent_id FROM folders WHERE parent_id = %s', (folder_id,))
+        if folder_id == "root":
+            cursor.execute('SELECT id, name, parent_id FROM folders WHERE parent_id IS NULL')
+        else:
+            cursor.execute('SELECT id, name, parent_id FROM folders WHERE parent_id = %s', (folder_id,))
+            
         folders = [
             {"id": row[0], "name": row[1], "parent_id": row[2]}
             for row in cursor.fetchall()
         ]
         
         # Get files
-        cursor.execute('SELECT id, name, type, size FROM files WHERE folder_id = %s', (folder_id,))
+        if folder_id == "root":
+            cursor.execute('SELECT id, name, type, size FROM files WHERE folder_id IS NULL')
+        else:
+            cursor.execute('SELECT id, name, type, size FROM files WHERE folder_id = %s', (folder_id,))
+            
         files = [
             {"id": row[0], "name": row[1], "type": row[2], "size": row[3]}
             for row in cursor.fetchall()
