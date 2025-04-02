@@ -1439,7 +1439,7 @@ def create_folder(name: str = Form(...), parent_id: Optional[str] = Form(None)):
             conn.close()
             
 @app.get("/folders/{folder_id}/contents", response_model=FolderContents)
-def get_folder_contents(folder_id: str):
+def get_folder_contents(folder_id: str = "root"):
     conn = None
     try:
         conn = get_db()
@@ -1466,7 +1466,7 @@ def get_folder_contents(folder_id: str):
     finally:
         if conn:
             conn.close()
-
+            
 @app.post("/upload/")
 def upload_files(
     files: List[UploadFile] = File(...),
