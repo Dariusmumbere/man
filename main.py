@@ -140,9 +140,7 @@ class FolderContents(BaseModel):
 
 class FolderCreate(BaseModel):
     name: str
-    parent_id: Optional[str] = None
-
-
+    
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
