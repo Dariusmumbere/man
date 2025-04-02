@@ -1401,7 +1401,7 @@ def get_gross_profit():
             conn.close()
 
 @app.post("/folders/", response_model=Folder)
-def create_folder(name: str = Form(...), parent_id: str = Form(None)):
+def create_folder(name: str = Form(...), parent_id: Optional[str] = Form(None)):
     conn = None
     try:
         conn = get_db()
