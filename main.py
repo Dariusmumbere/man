@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import UploadFile, File, Form
 from pydantic import BaseModel
 import os
 import psycopg2
@@ -9,6 +10,10 @@ import json
 from typing import List, Optional
 from datetime import date,datetime
 from typing import Dict
+import uuid
+import shutil
+from typing import List
+from pathlib import Path
 
 app = FastAPI()
 
@@ -112,10 +117,28 @@ class Expense(BaseModel):
     person: str
     description: str
     cost: float
-    quantity: int    
+    quantity: int   
 
+class Folder(BaseModel):
+    id: str
+    name: str
+    parent_id: Optional[str] = None
 
-    
+class FileItem(BaseModel):
+    id: str
+    name: str
+    type: str
+    size: int
+    folder_id: Optional[str] = None
+
+class FolderContents(BaseModel):
+    folders: List[Folder]
+    files: List[FileItem]
+
+# File storage setup
+UPLOAD_DIR = "uploads/fundraising"
+Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+
 # Initialize database tables
 def init_db():
     conn = None
@@ -231,7 +254,37 @@ def init_db():
         date TEXT NOT NULL
     )
 ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS folders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE
+            )
+        ''')
         
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                folder_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+                path TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('SELECT id FROM folders WHERE id = %s', ('root',))
+        if not cursor.fetchone():
+            cursor.execute('INSERT INTO folders (id, name) VALUES (%s, %s)', ('root', 'Fundraising Documents'))
+        
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
         
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
@@ -1348,6 +1401,161 @@ def get_gross_profit():
     except Exception as e:
         logger.error(f"Error calculating gross profit: {e}")
         raise HTTPException(status_code=500, detail="Failed to calculate gross profit")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/folders/", response_model=Folder)
+def create_folder(name: str = Form(...), parent_id: str = Form(None)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        folder_id = str(uuid.uuid4())
+        
+        if parent_id:
+            # Verify parent exists
+            cursor.execute('SELECT id FROM folders WHERE id = %s', (parent_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Parent folder not found")
+            
+            cursor.execute('''
+                INSERT INTO folders (id, name, parent_id)
+                VALUES (%s, %s, %s)
+            ''', (folder_id, name, parent_id))
+        else:
+            cursor.execute('''
+                INSERT INTO folders (id, name)
+                VALUES (%s, %s)
+            ''', (folder_id, name))
+        
+        conn.commit()
+        return {"id": folder_id, "name": name, "parent_id": parent_id}
+    except Exception as e:
+        logger.error(f"Error creating folder: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create folder")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/folders/{folder_id}/contents", response_model=FolderContents)
+def get_folder_contents(folder_id: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get subfolders
+        cursor.execute('SELECT id, name, parent_id FROM folders WHERE parent_id = %s', (folder_id,))
+        folders = [
+            {"id": row[0], "name": row[1], "parent_id": row[2]}
+            for row in cursor.fetchall()
+        ]
+        
+        # Get files
+        cursor.execute('SELECT id, name, type, size FROM files WHERE folder_id = %s', (folder_id,))
+        files = [
+            {"id": row[0], "name": row[1], "type": row[2], "size": row[3]}
+            for row in cursor.fetchall()
+        ]
+        
+        return {"folders": folders, "files": files}
+    except Exception as e:
+        logger.error(f"Error getting folder contents: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get folder contents")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/upload/")
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    folder_id: str = Form(None)
+):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        uploaded_files = []
+        
+        for file in files:
+            # Generate unique filename
+            file_id = str(uuid.uuid4())
+            file_ext = Path(file.filename).suffix
+            file_type = file.content_type.split('/')[-1]
+            file_path = Path(UPLOAD_DIR) / f"{file_id}{file_ext}"
+            
+            # Save file to disk
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            
+            # Get file size
+            file_size = file_path.stat().st_size
+            
+            # Store file metadata in database
+            cursor.execute('''
+                INSERT INTO files (id, name, type, size, folder_id, path)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (
+                file_id,
+                file.filename,
+                file_type,
+                file_size,
+                folder_id,
+                str(file_path)
+            ))
+            
+            uploaded_files.append({
+                "id": file_id,
+                "name": file.filename,
+                "type": file_type,
+                "size": file_size
+            })
+        
+        conn.commit()
+        return {"uploadedFiles": uploaded_files}
+    except Exception as e:
+        logger.error(f"Error uploading files: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to upload files")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/files/{file_id}/download")
+async def download_file(file_id: str):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get file metadata
+        cursor.execute('SELECT name, path FROM files WHERE id = %s', (file_id,))
+        file_data = cursor.fetchone()
+        
+        if not file_data:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_name, file_path = file_data
+        
+        # Check if file exists
+        if not Path(file_path).exists():
+            raise HTTPException(status_code=404, detail="File not found on server")
+        
+        # Return file for download
+        return FileResponse(
+            file_path,
+            filename=file_name,
+            media_type='application/octet-stream'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to download file")
     finally:
         if conn:
             conn.close()
