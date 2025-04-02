@@ -2,7 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import UploadFile, File, Form
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 import os
 import psycopg2
 import logging
@@ -28,6 +29,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"]  # Important for file downloads
+)
 )
 
 # Database connection
@@ -134,6 +137,11 @@ class FileItem(BaseModel):
 class FolderContents(BaseModel):
     folders: List[Folder]
     files: List[FileItem]
+
+class FolderCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    parent_id: Optional[str] = None
+
 
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -1404,7 +1412,6 @@ def create_folder(name: str = Form(...), parent_id: str = Form(None)):
         folder_id = str(uuid.uuid4())
         
         if parent_id:
-            # Verify parent exists
             cursor.execute('SELECT id FROM folders WHERE id = %s', (parent_id,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail="Parent folder not found")
@@ -1412,15 +1419,18 @@ def create_folder(name: str = Form(...), parent_id: str = Form(None)):
             cursor.execute('''
                 INSERT INTO folders (id, name, parent_id)
                 VALUES (%s, %s, %s)
+                RETURNING id, name, parent_id
             ''', (folder_id, name, parent_id))
         else:
             cursor.execute('''
                 INSERT INTO folders (id, name)
                 VALUES (%s, %s)
+                RETURNING id, name, parent_id
             ''', (folder_id, name))
         
+        folder = cursor.fetchone()
         conn.commit()
-        return {"id": folder_id, "name": name, "parent_id": parent_id}
+        return {"id": folder[0], "name": folder[1], "parent_id": folder[2]}
     except Exception as e:
         logger.error(f"Error creating folder: {e}")
         if conn:
@@ -1429,7 +1439,7 @@ def create_folder(name: str = Form(...), parent_id: str = Form(None)):
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/folders/{folder_id}/contents", response_model=FolderContents)
 def get_folder_contents(folder_id: str):
     conn = None
@@ -1460,7 +1470,7 @@ def get_folder_contents(folder_id: str):
             conn.close()
 
 @app.post("/upload/")
-async def upload_files(
+def upload_files(
     files: List[UploadFile] = File(...),
     folder_id: str = Form(None)
 ):
@@ -1468,31 +1478,26 @@ async def upload_files(
     try:
         conn = get_db()
         cursor = conn.cursor()
-        
         uploaded_files = []
         
         for file in files:
-            # Generate unique filename
             file_id = str(uuid.uuid4())
             file_ext = Path(file.filename).suffix
-            file_type = file.content_type.split('/')[-1]
             file_path = Path(UPLOAD_DIR) / f"{file_id}{file_ext}"
             
-            # Save file to disk
+            # Save file synchronously
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(file.file.read())
             
-            # Get file size
             file_size = file_path.stat().st_size
             
-            # Store file metadata in database
             cursor.execute('''
                 INSERT INTO files (id, name, type, size, folder_id, path)
                 VALUES (%s, %s, %s, %s, %s, %s)
             ''', (
                 file_id,
                 file.filename,
-                file_type,
+                file.content_type,
                 file_size,
                 folder_id,
                 str(file_path)
@@ -1501,7 +1506,7 @@ async def upload_files(
             uploaded_files.append({
                 "id": file_id,
                 "name": file.filename,
-                "type": file_type,
+                "type": file.content_type,
                 "size": file_size
             })
         
@@ -1517,13 +1522,12 @@ async def upload_files(
             conn.close()
 
 @app.get("/files/{file_id}/download")
-async def download_file(file_id: str):
+def download_file(file_id: str):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
         
-        # Get file metadata
         cursor.execute('SELECT name, path FROM files WHERE id = %s', (file_id,))
         file_data = cursor.fetchone()
         
@@ -1531,12 +1535,11 @@ async def download_file(file_id: str):
             raise HTTPException(status_code=404, detail="File not found")
         
         file_name, file_path = file_data
+        file_path = Path(file_path)
         
-        # Check if file exists
-        if not Path(file_path).exists():
+        if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found on server")
         
-        # Return file for download
         return FileResponse(
             file_path,
             filename=file_name,
