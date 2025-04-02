@@ -31,7 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"]  # Important for file downloads
 )
-)
+
 
 # Database connection
 DATABASE_URL=os.getenv("DATABASE_URL", "postgresql://itech_l1q2_user:AoqQkrtzrQW7WEDOJdh0C6hhlY5Xe3sv@dpg-cuvnsbggph6c73ev87g0-a/itech_l1q2")
