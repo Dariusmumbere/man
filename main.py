@@ -276,20 +276,11 @@ def init_db():
         if not cursor.fetchone():
             cursor.execute('INSERT INTO folders (id, name) VALUES (%s, %s)', ('root', 'Fundraising Documents'))
         
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-        if conn:
-            conn.rollback()
-        raise
-    finally:
-        if conn:
-            conn.close()
-        
         # Initialize the balance to 0 if the table is empty
         cursor.execute('SELECT COUNT(*) FROM bank_account')
         if cursor.fetchone()[0] == 0:
             cursor.execute('INSERT INTO bank_account (balance) VALUES (0)')
+            
         conn.commit()
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
@@ -299,6 +290,9 @@ def init_db():
     finally:
         if conn:
             conn.close()
+
+# Initialize database
+init_db()
             
 # Product endpoints
 @app.post("/products/")
