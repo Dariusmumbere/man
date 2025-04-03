@@ -140,6 +140,16 @@ class FolderContents(BaseModel):
 
 class FolderCreate(BaseModel):
     name: str
+
+class Donation(BaseModel):
+    donor_name: str
+    amount: float
+    payment_method: str
+    date: str
+    project: Optional[str] = None
+    notes: Optional[str] = None
+    status: str = "pending"  # "pending", "completed"
+
     
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -1714,6 +1724,115 @@ def preview_file(file_id: str):
     except Exception as e:
         logger.error(f"Error previewing file: {e}")
         raise HTTPException(status_code=500, detail="Failed to preview file")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/donations/")
+def add_donation(donation: Donation):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Insert the donation into the database
+        cursor.execute('''
+            INSERT INTO transactions (date, type, amount, purpose)
+            VALUES (%s, %s, %s, %s)
+        ''', (
+            donation.date,
+            "deposit",
+            donation.amount,
+            f"Donation from {donation.donor_name} for {donation.project or 'general fund'}"
+        ))
+        
+        # Create a notification for the donation
+        notification_message = f"New donation from {donation.donor_name} for UGX {donation.amount}"
+        cursor.execute('''
+            INSERT INTO notifications (message, type)
+            VALUES (%s, %s)
+        ''', (notification_message, "donation"))
+        
+        conn.commit()
+        return {"message": "Donation added successfully"}
+    except Exception as e:
+        logger.error(f"Error adding donation: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add donation: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/donations/")
+def get_donations():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get all donations (transactions of type 'deposit' with purpose containing 'Donation')
+        cursor.execute('''
+            SELECT id, date, amount, purpose 
+            FROM transactions 
+            WHERE type = 'deposit' AND purpose LIKE 'Donation%'
+            ORDER BY date DESC
+        ''')
+        
+        donations = []
+        for row in cursor.fetchall():
+            # Parse the purpose field to extract donor name and project
+            purpose_parts = row[3].split(' for ')
+            donor_name = purpose_parts[0].replace('Donation from ', '')
+            project = purpose_parts[1] if len(purpose_parts) > 1 else 'general fund'
+            
+            donations.append({
+                "id": row[0],
+                "date": row[1].strftime("%Y-%m-%d") if isinstance(row[1], datetime) else row[1],
+                "donor_name": donor_name,
+                "amount": row[2],
+                "project": project,
+                "status": "completed"  # Assuming all recorded donations are completed
+            })
+            
+        return {"donations": donations}
+    except Exception as e:
+        logger.error(f"Error fetching donations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch donations")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/donations/{donation_id}")
+def delete_donation(donation_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First get the donation to check if it exists
+        cursor.execute('SELECT * FROM transactions WHERE id = %s', (donation_id,))
+        donation = cursor.fetchone()
+        if not donation:
+            raise HTTPException(status_code=404, detail="Donation not found")
+        
+        # Delete the donation
+        cursor.execute('DELETE FROM transactions WHERE id = %s', (donation_id,))
+        
+        # Create a notification about the deletion
+        notification_message = f"Donation record {donation_id} deleted"
+        cursor.execute('''
+            INSERT INTO notifications (message, type)
+            VALUES (%s, %s)
+        ''', (notification_message, "donation_deletion"))
+        
+        conn.commit()
+        return {"message": "Donation deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting donation: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete donation")
     finally:
         if conn:
             conn.close()
