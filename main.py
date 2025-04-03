@@ -1493,11 +1493,10 @@ def upload_files(
             
             # Save file synchronously
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(file.file.read())
             
             file_size = file_path.stat().st_size
             
-            # Fixed SQL query with proper parentheses
             cursor.execute('''
                 INSERT INTO files (id, name, type, size, folder_id, path)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -1508,7 +1507,7 @@ def upload_files(
                 file_size,
                 folder_id,
                 str(file_path)
-            )  # THIS WAS THE MISSING PARENTHESIS
+            ))
             
             uploaded_files.append({
                 "id": file_id,
@@ -1527,7 +1526,7 @@ def upload_files(
     finally:
         if conn:
             conn.close()
-            
+
 @app.get("/files/{file_id}/download")
 def download_file(file_id: str):
     conn = None
