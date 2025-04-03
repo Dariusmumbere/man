@@ -1497,6 +1497,7 @@ def upload_files(
             
             file_size = file_path.stat().st_size
             
+            # Fixed SQL query with proper parentheses
             cursor.execute('''
                 INSERT INTO files (id, name, type, size, folder_id, path)
                 VALUES (%s, %s, %s, %s, %s, %s)
