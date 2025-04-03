@@ -1508,7 +1508,7 @@ def upload_files(
                 file_size,
                 folder_id,
                 str(file_path)
-            )
+            )  # THIS WAS THE MISSING PARENTHESIS
             
             uploaded_files.append({
                 "id": file_id,
