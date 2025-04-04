@@ -150,6 +150,16 @@ class Donation(BaseModel):
     notes: Optional[str] = None
     status: str = "pending"  # "pending", "completed"
 
+class Donor(BaseModel):
+    id: Optional[int] = None
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    donor_type: Optional[str] = None  # "individual", "corporate", "foundation", etc.
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
     
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -161,8 +171,19 @@ def init_db():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('DROP TABLE IF EXISTS diary_entries')
         # Drop and recreate tables to ensure the correct schema
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS donors (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT,
+                phone TEXT,
+                address TEXT,
+                donor_type TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
@@ -1833,6 +1854,239 @@ def delete_donation(donation_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete donation")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/donors/", response_model=Donor)
+def create_donor(donor: Donor):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO donors (name, email, phone, address, donor_type, notes)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, name, email, phone, address, donor_type, notes, created_at
+        ''', (
+            donor.name, donor.email, donor.phone, donor.address, 
+            donor.donor_type, donor.notes
+        ))
+        
+        new_donor = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_donor[0],
+            "name": new_donor[1],
+            "email": new_donor[2],
+            "phone": new_donor[3],
+            "address": new_donor[4],
+            "donor_type": new_donor[5],
+            "notes": new_donor[6],
+            "created_at": new_donor[7]
+        }
+    except Exception as e:
+        logger.error(f"Error creating donor: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create donor")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/donors/", response_model=List[Donor])
+def get_donors(search: Optional[str] = None):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        if search:
+            cursor.execute('''
+                SELECT id, name, email, phone, address, donor_type, notes, created_at
+                FROM donors
+                WHERE name ILIKE %s OR email ILIKE %s OR phone ILIKE %s
+                ORDER BY name
+            ''', (f"%{search}%", f"%{search}%", f"%{search}%"))
+        else:
+            cursor.execute('''
+                SELECT id, name, email, phone, address, donor_type, notes, created_at
+                FROM donors
+                ORDER BY name
+            ''')
+        
+        donors = []
+        for row in cursor.fetchall():
+            donors.append({
+                "id": row[0],
+                "name": row[1],
+                "email": row[2],
+                "phone": row[3],
+                "address": row[4],
+                "donor_type": row[5],
+                "notes": row[6],
+                "created_at": row[7]
+            })
+            
+        return donors
+    except Exception as e:
+        logger.error(f"Error fetching donors: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch donors")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/donors/{donor_id}", response_model=Donor)
+def get_donor(donor_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, email, phone, address, donor_type, notes, created_at
+            FROM donors
+            WHERE id = %s
+        ''', (donor_id,))
+        
+        donor = cursor.fetchone()
+        if not donor:
+            raise HTTPException(status_code=404, detail="Donor not found")
+            
+        return {
+            "id": donor[0],
+            "name": donor[1],
+            "email": donor[2],
+            "phone": donor[3],
+            "address": donor[4],
+            "donor_type": donor[5],
+            "notes": donor[6],
+            "created_at": donor[7]
+        }
+    except Exception as e:
+        logger.error(f"Error fetching donor: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch donor")
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/donors/{donor_id}", response_model=Donor)
+def update_donor(donor_id: int, donor: Donor):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE donors
+            SET name = %s, email = %s, phone = %s, address = %s, 
+                donor_type = %s, notes = %s
+            WHERE id = %s
+            RETURNING id, name, email, phone, address, donor_type, notes, created_at
+        ''', (
+            donor.name, donor.email, donor.phone, donor.address,
+            donor.donor_type, donor.notes, donor_id
+        ))
+        
+        updated_donor = cursor.fetchone()
+        if not updated_donor:
+            raise HTTPException(status_code=404, detail="Donor not found")
+            
+        conn.commit()
+        return {
+            "id": updated_donor[0],
+            "name": updated_donor[1],
+            "email": updated_donor[2],
+            "phone": updated_donor[3],
+            "address": updated_donor[4],
+            "donor_type": updated_donor[5],
+            "notes": updated_donor[6],
+            "created_at": updated_donor[7]
+        }
+    except Exception as e:
+        logger.error(f"Error updating donor: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update donor")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/donors/{donor_id}")
+def delete_donor(donor_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First check if donor exists
+        cursor.execute('SELECT id FROM donors WHERE id = %s', (donor_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Donor not found")
+            
+        # Delete donor
+        cursor.execute('DELETE FROM donors WHERE id = %s', (donor_id,))
+        conn.commit()
+        
+        return {"message": "Donor deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting donor: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete donor")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/donors/{donor_id}/donations")
+def get_donor_donations(donor_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First check if donor exists
+        cursor.execute('SELECT name FROM donors WHERE id = %s', (donor_id,))
+        donor = cursor.fetchone()
+        if not donor:
+            raise HTTPException(status_code=404, detail="Donor not found")
+            
+        donor_name = donor[0]
+        
+        # Get all donations for this donor
+        cursor.execute('''
+            SELECT id, date, amount, purpose 
+            FROM transactions 
+            WHERE type = 'deposit' AND purpose LIKE %s
+            ORDER BY date DESC
+        ''', (f"Donation from {donor_name}%",))
+        
+        donations = []
+        for row in cursor.fetchall():
+            # Parse the purpose field to extract project
+            purpose_parts = row[3].split(' for ')
+            project = purpose_parts[1] if len(purpose_parts) > 1 else 'general fund'
+            
+            donations.append({
+                "id": row[0],
+                "date": row[1].strftime("%Y-%m-%d") if isinstance(row[1], datetime) else row[1],
+                "amount": row[2],
+                "project": project,
+                "status": "completed"
+            })
+            
+        return {
+            "donor_id": donor_id,
+            "donor_name": donor_name,
+            "donations": donations,
+            "total_donations": sum(d['amount'] for d in donations),
+            "donation_count": len(donations)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching donor donations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch donor donations")
     finally:
         if conn:
             conn.close()
