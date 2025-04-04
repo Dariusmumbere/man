@@ -160,6 +160,16 @@ class Donor(BaseModel):
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
 
+class DonorCreate(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    donor_type: str = "individual"  # "individual", "corporate", "foundation", etc.
+    notes: Optional[str] = None
+    category: str = "one-time"  # "regular" or "one-time"
+
+
     
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -2088,6 +2098,102 @@ def get_donor_donations(donor_id: int):
     except Exception as e:
         logger.error(f"Error fetching donor donations: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch donor donations")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/donors/", response_model=Donor)
+def create_donor(donor: DonorCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Validate donor type and category
+        if donor.donor_type not in ["individual", "corporate", "foundation", "other"]:
+            raise HTTPException(status_code=400, detail="Invalid donor type")
+            
+        if donor.category not in ["regular", "one-time"]:
+            raise HTTPException(status_code=400, detail="Invalid donor category")
+        
+        cursor.execute('''
+            INSERT INTO donors (name, email, phone, address, donor_type, notes, category)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, email, phone, address, donor_type, notes, category, created_at
+        ''', (
+            donor.name, donor.email, donor.phone, donor.address, 
+            donor.donor_type, donor.notes, donor.category
+        ))
+        
+        new_donor = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_donor[0],
+            "name": new_donor[1],
+            "email": new_donor[2],
+            "phone": new_donor[3],
+            "address": new_donor[4],
+            "donor_type": new_donor[5],
+            "notes": new_donor[6],
+            "category": new_donor[7],
+            "created_at": new_donor[8]
+        }
+    except Exception as e:
+        logger.error(f"Error creating donor: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/donors/{donor_id}", response_model=Donor)
+def update_donor(donor_id: int, donor: DonorCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Validate donor type and category
+        if donor.donor_type not in ["individual", "corporate", "foundation", "other"]:
+            raise HTTPException(status_code=400, detail="Invalid donor type")
+            
+        if donor.category not in ["regular", "one-time"]:
+            raise HTTPException(status_code=400, detail="Invalid donor category")
+        
+        cursor.execute('''
+            UPDATE donors
+            SET name = %s, email = %s, phone = %s, address = %s, 
+                donor_type = %s, notes = %s, category = %s
+            WHERE id = %s
+            RETURNING id, name, email, phone, address, donor_type, notes, category, created_at
+        ''', (
+            donor.name, donor.email, donor.phone, donor.address,
+            donor.donor_type, donor.notes, donor.category, donor_id
+        ))
+        
+        updated_donor = cursor.fetchone()
+        if not updated_donor:
+            raise HTTPException(status_code=404, detail="Donor not found")
+            
+        conn.commit()
+        return {
+            "id": updated_donor[0],
+            "name": updated_donor[1],
+            "email": updated_donor[2],
+            "phone": updated_donor[3],
+            "address": updated_donor[4],
+            "donor_type": updated_donor[5],
+            "notes": updated_donor[6],
+            "category": updated_donor[7],
+            "created_at": updated_donor[8]
+        }
+    except Exception as e:
+        logger.error(f"Error updating donor: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
             conn.close()
