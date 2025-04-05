@@ -1869,44 +1869,6 @@ def delete_donation(donation_id: int):
         if conn:
             conn.close()
 
-@app.post("/donors/", response_model=Donor)
-def create_donor(donor: Donor):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO donors (name, email, phone, address, donor_type, notes)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id, name, email, phone, address, donor_type, notes, created_at
-        ''', (
-            donor.name, donor.email, donor.phone, donor.address, 
-            donor.donor_type, donor.notes
-        ))
-        
-        new_donor = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "id": new_donor[0],
-            "name": new_donor[1],
-            "email": new_donor[2],
-            "phone": new_donor[3],
-            "address": new_donor[4],
-            "donor_type": new_donor[5],
-            "notes": new_donor[6],
-            "created_at": new_donor[7]
-        }
-    except Exception as e:
-        logger.error(f"Error creating donor: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to create donor")
-    finally:
-        if conn:
-            conn.close()
-
 @app.get("/donors/", response_model=List[Donor])
 def get_donors(search: Optional[str] = None):
     conn = None
@@ -1916,14 +1878,14 @@ def get_donors(search: Optional[str] = None):
         
         if search:
             cursor.execute('''
-                SELECT id, name, email, phone, address, donor_type, notes, created_at
+                SELECT DISTINCT id, name, email, phone, address, donor_type, notes, category, created_at
                 FROM donors
                 WHERE name ILIKE %s OR email ILIKE %s OR phone ILIKE %s
                 ORDER BY name
             ''', (f"%{search}%", f"%{search}%", f"%{search}%"))
         else:
             cursor.execute('''
-                SELECT id, name, email, phone, address, donor_type, notes, created_at
+                SELECT DISTINCT id, name, email, phone, address, donor_type, notes, category, created_at
                 FROM donors
                 ORDER BY name
             ''')
@@ -1938,7 +1900,8 @@ def get_donors(search: Optional[str] = None):
                 "address": row[4],
                 "donor_type": row[5],
                 "notes": row[6],
-                "created_at": row[7]
+                "category": row[7],
+                "created_at": row[8]
             })
             
         return donors
