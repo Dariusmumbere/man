@@ -196,6 +196,20 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        cursor.execute("""
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE donors ADD COLUMN category TEXT DEFAULT 'one-time';
+                EXCEPTION
+                    WHEN duplicate_column THEN 
+                    RAISE NOTICE 'column category already exists in donors';
+                END;
+            END $$;
+        """)
+                        
+        
+        
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
@@ -1879,14 +1893,14 @@ def get_donors(search: Optional[str] = None):
         
         if search:
             cursor.execute('''
-                SELECT DISTINCT id, name, email, phone, address, donor_type, notes, category, created_at
+                SELECT id, name, email, phone, address, donor_type, notes, created_at
                 FROM donors
                 WHERE name ILIKE %s OR email ILIKE %s OR phone ILIKE %s
                 ORDER BY name
             ''', (f"%{search}%", f"%{search}%", f"%{search}%"))
         else:
             cursor.execute('''
-                SELECT DISTINCT id, name, email, phone, address, donor_type, notes, category, created_at
+                SELECT id, name, email, phone, address, donor_type, notes, created_at
                 FROM donors
                 ORDER BY name
             ''')
@@ -1901,8 +1915,8 @@ def get_donors(search: Optional[str] = None):
                 "address": row[4],
                 "donor_type": row[5],
                 "notes": row[6],
-                "category": row[7],
-                "created_at": row[8]
+                "created_at": row[7],
+                "category": "one-time"  # Default value if column doesn't exist
             })
             
         return donors
