@@ -192,6 +192,7 @@ def init_db():
                 address TEXT,
                 donor_type TEXT,
                 notes TEXT,
+                category TEXT DEFAULT 'one-time',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
