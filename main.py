@@ -1782,7 +1782,7 @@ def add_donation(donation: Donation):
         conn = get_db()
         cursor = conn.cursor()
         
-        # Insert the donation into the database
+        # Insert the donation into the database with payment method
         cursor.execute('''
             INSERT INTO transactions (date, type, amount, purpose)
             VALUES (%s, %s, %s, %s)
@@ -1790,11 +1790,11 @@ def add_donation(donation: Donation):
             donation.date,
             "deposit",
             donation.amount,
-            f"Donation from {donation.donor_name} for {donation.project or 'general fund'}"
+            f"Donation from {donation.donor_name}|{donation.payment_method}|{donation.project or 'general fund'}"
         ))
         
         # Create a notification for the donation
-        notification_message = f"New donation from {donation.donor_name} for UGX {donation.amount}"
+        notification_message = f"New donation from {donation.donor_name} for UGX {donation.amount} via {donation.payment_method}"
         cursor.execute('''
             INSERT INTO notifications (message, type)
             VALUES (%s, %s)
@@ -1810,7 +1810,7 @@ def add_donation(donation: Donation):
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/donations/")
 def get_donations():
     conn = None
