@@ -1818,17 +1818,17 @@ def get_donations():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Get all donations (transactions of type 'deposit' with purpose containing 'Donation')
+        # Get all donations with proper donor association
         cursor.execute('''
-            SELECT id, date, amount, purpose 
-            FROM transactions 
-            WHERE type = 'deposit' AND purpose LIKE 'Donation%'
-            ORDER BY date DESC
+            SELECT t.id, t.date, t.amount, t.purpose, d.id as donor_id
+            FROM transactions t
+            LEFT JOIN donors d ON t.purpose LIKE 'Donation from ' || d.name || '%'
+            WHERE t.type = 'deposit' AND t.purpose LIKE 'Donation from %'
+            ORDER BY t.date DESC
         ''')
         
         donations = []
         for row in cursor.fetchall():
-            # Parse the purpose field to extract donor name and project
             purpose_parts = row[3].split(' for ')
             donor_name = purpose_parts[0].replace('Donation from ', '')
             project = purpose_parts[1] if len(purpose_parts) > 1 else 'general fund'
@@ -1836,10 +1836,11 @@ def get_donations():
             donations.append({
                 "id": row[0],
                 "date": row[1].strftime("%Y-%m-%d") if isinstance(row[1], datetime) else row[1],
+                "donor_id": row[4],  # Include donor_id in response
                 "donor_name": donor_name,
                 "amount": row[2],
                 "project": project,
-                "status": "completed"  # Assuming all recorded donations are completed
+                "status": "completed"
             })
             
         return {"donations": donations}
@@ -1849,7 +1850,7 @@ def get_donations():
     finally:
         if conn:
             conn.close()
-
+            
 @app.delete("/donations/{donation_id}")
 def delete_donation(donation_id: int):
     conn = None
@@ -1891,18 +1892,19 @@ def get_donors(search: Optional[str] = None):
         conn = get_db()
         cursor = conn.cursor()
         
+        # Distinct query to ensure unique donors
         if search:
             cursor.execute('''
-                SELECT id, name, email, phone, address, donor_type, notes, created_at
+                SELECT DISTINCT ON (id) id, name, email, phone, address, donor_type, notes, category, created_at
                 FROM donors
                 WHERE name ILIKE %s OR email ILIKE %s OR phone ILIKE %s
-                ORDER BY name
+                ORDER BY id, name
             ''', (f"%{search}%", f"%{search}%", f"%{search}%"))
         else:
             cursor.execute('''
-                SELECT id, name, email, phone, address, donor_type, notes, created_at
+                SELECT DISTINCT ON (id) id, name, email, phone, address, donor_type, notes, category, created_at
                 FROM donors
-                ORDER BY name
+                ORDER BY id, name
             ''')
         
         donors = []
@@ -1915,8 +1917,8 @@ def get_donors(search: Optional[str] = None):
                 "address": row[4],
                 "donor_type": row[5],
                 "notes": row[6],
-                "created_at": row[7],
-                "category": "one-time"  # Default value if column doesn't exist
+                "category": row[7] if len(row) > 7 else "one-time",
+                "created_at": row[8] if len(row) > 8 else None
             })
             
         return donors
@@ -1926,7 +1928,7 @@ def get_donors(search: Optional[str] = None):
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/donors/{donor_id}", response_model=Donor)
 def get_donor(donor_id: int):
     conn = None
@@ -2172,6 +2174,43 @@ def update_donor(donor_id: int, donor: DonorCreate):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/donors/stats/")
+def get_donor_stats():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get donation statistics grouped by donor
+        cursor.execute('''
+            SELECT d.id as donor_id, d.name, 
+                   COUNT(t.id) as donation_count,
+                   SUM(t.amount) as total_donated,
+                   MIN(t.date) as first_donation,
+                   MAX(t.date) as last_donation
+            FROM donors d
+            LEFT JOIN transactions t ON t.purpose LIKE 'Donation from ' || d.name || '%' AND t.type = 'deposit'
+            GROUP BY d.id, d.name
+        ''')
+        
+        stats = {}
+        for row in cursor.fetchall():
+            stats[row[0]] = {  # donor_id as key
+                "name": row[1],
+                "donation_count": row[2] or 0,
+                "total_donated": float(row[3] or 0),
+                "first_donation": row[4].strftime("%Y-%m-%d") if row[4] else None,
+                "last_donation": row[5].strftime("%Y-%m-%d") if row[5] else None
+            }
+            
+        return {"donor_stats": stats}
+    except Exception as e:
+        logger.error(f"Error fetching donor stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch donor stats")
     finally:
         if conn:
             conn.close()
