@@ -183,6 +183,7 @@ def init_db():
         cursor = conn.cursor()
         # Drop and recreate tables to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
+        cursor.execute('DROP TABLE IF EXISTS donations')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
                 id SERIAL PRIMARY KEY,
