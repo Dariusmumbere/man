@@ -160,15 +160,13 @@ class Donor(BaseModel):
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
 
-class DonorCreate(BaseModel):
-    name: str
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    donor_type: str = "individual"  # "individual", "corporate", "foundation", etc.
+class DonationCreate(BaseModel):
+    donor_name: str
+    amount: float
+    payment_method: str
+    date: str
+    project: Optional[str] = None
     notes: Optional[str] = None
-    category: str = "one-time"  # "regular" or "one-time"
-
 
     
 # File storage setup
@@ -183,7 +181,6 @@ def init_db():
         cursor = conn.cursor()
         # Drop and recreate tables to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
-        cursor.execute('DROP TABLE IF EXISTS donations')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
                 id SERIAL PRIMARY KEY,
@@ -334,7 +331,8 @@ def init_db():
                 date DATE NOT NULL,
                 project TEXT,
                 notes TEXT,
-                status TEXT DEFAULT 'pending'
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -1788,8 +1786,8 @@ def preview_file(file_id: str):
         if conn:
             conn.close()
 
-@app.post("/donations/")
-def add_donation(donation: Donation):
+@app.post("/donations/", response_model=Donation)
+def create_donation(donation: DonationCreate):
     conn = None
     try:
         conn = get_db()
@@ -1797,17 +1795,19 @@ def add_donation(donation: Donation):
         
         # Insert into donations table
         cursor.execute('''
-            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, donor_name, amount, payment_method, date, project, notes, status, created_at
         ''', (
             donation.donor_name,
             donation.amount,
             donation.payment_method,
             donation.date,
             donation.project,
-            donation.notes,
-            donation.status
+            donation.notes
         ))
+        
+        new_donation = cursor.fetchone()
         
         # Also record as a transaction
         cursor.execute('''
@@ -1817,28 +1817,39 @@ def add_donation(donation: Donation):
             donation.date,
             "deposit",
             donation.amount,
-            f"Donation from {donation.donor_name} for {donation.project or 'general fund'}"
+            f"Donation from {donation.donor_name} via {donation.payment_method}"
         ))
         
         # Create notification
-        notification_message = f"New donation from {donation.donor_name} for UGX {donation.amount}"
+        notification_message = f"New donation from {donation.donor_name} via {donation.payment_method}"
         cursor.execute('''
             INSERT INTO notifications (message, type)
             VALUES (%s, %s)
         ''', (notification_message, "donation"))
         
         conn.commit()
-        return {"message": "Donation added successfully"}
+        
+        return {
+            "id": new_donation[0],
+            "donor_name": new_donation[1],
+            "amount": new_donation[2],
+            "payment_method": new_donation[3],
+            "date": new_donation[4],
+            "project": new_donation[5],
+            "notes": new_donation[6],
+            "status": new_donation[7],
+            "created_at": new_donation[8]
+        }
     except Exception as e:
-        logger.error(f"Error adding donation: {e}")
+        logger.error(f"Error creating donation: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to add donation: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
             conn.close()
             
-@app.get("/donations/")
+@app.get("/donations/", response_model=List[Donation])
 def get_donations():
     conn = None
     try:
@@ -1846,7 +1857,7 @@ def get_donations():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, donor_name, amount, payment_method, date, project, notes, status
+            SELECT id, donor_name, amount, payment_method, date, project, notes, status, created_at
             FROM donations
             ORDER BY date DESC
         ''')
@@ -1861,10 +1872,11 @@ def get_donations():
                 "date": row[4].strftime("%Y-%m-%d") if isinstance(row[4], date) else row[4],
                 "project": row[5],
                 "notes": row[6],
-                "status": row[7]
+                "status": row[7],
+                "created_at": row[8].strftime("%Y-%m-%d %H:%M:%S") if isinstance(row[8], datetime) else row[8]
             })
             
-        return {"donations": donations}
+        return donations
     except Exception as e:
         logger.error(f"Error fetching donations: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch donations")
