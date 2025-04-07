@@ -324,6 +324,18 @@ def init_db():
                 parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS donations (
+                id SERIAL PRIMARY KEY,
+                donor_name TEXT NOT NULL,
+                amount REAL NOT NULL,
+                payment_method TEXT NOT NULL,
+                date DATE NOT NULL,
+                project TEXT,
+                notes TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+        ''')
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
@@ -1782,7 +1794,21 @@ def add_donation(donation: Donation):
         conn = get_db()
         cursor = conn.cursor()
         
-        # Insert the donation into the database with payment method
+        # Insert into donations table
+        cursor.execute('''
+            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            donation.donor_name,
+            donation.amount,
+            donation.payment_method,
+            donation.date,
+            donation.project,
+            donation.notes,
+            donation.status
+        ))
+        
+        # Also record as a transaction
         cursor.execute('''
             INSERT INTO transactions (date, type, amount, purpose)
             VALUES (%s, %s, %s, %s)
@@ -1790,11 +1816,11 @@ def add_donation(donation: Donation):
             donation.date,
             "deposit",
             donation.amount,
-            f"Donation from {donation.donor_name}|{donation.payment_method}|{donation.project or 'general fund'}"
+            f"Donation from {donation.donor_name} for {donation.project or 'general fund'}"
         ))
         
-        # Create a notification for the donation
-        notification_message = f"New donation from {donation.donor_name} for UGX {donation.amount} via {donation.payment_method}"
+        # Create notification
+        notification_message = f"New donation from {donation.donor_name} for UGX {donation.amount}"
         cursor.execute('''
             INSERT INTO notifications (message, type)
             VALUES (%s, %s)
@@ -1818,29 +1844,23 @@ def get_donations():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Get all donations with proper donor association
         cursor.execute('''
-            SELECT t.id, t.date, t.amount, t.purpose, d.id as donor_id
-            FROM transactions t
-            LEFT JOIN donors d ON t.purpose LIKE 'Donation from ' || d.name || '%'
-            WHERE t.type = 'deposit' AND t.purpose LIKE 'Donation from %'
-            ORDER BY t.date DESC
+            SELECT id, donor_name, amount, payment_method, date, project, notes, status
+            FROM donations
+            ORDER BY date DESC
         ''')
         
         donations = []
         for row in cursor.fetchall():
-            purpose_parts = row[3].split(' for ')
-            donor_name = purpose_parts[0].replace('Donation from ', '')
-            project = purpose_parts[1] if len(purpose_parts) > 1 else 'general fund'
-            
             donations.append({
                 "id": row[0],
-                "date": row[1].strftime("%Y-%m-%d") if isinstance(row[1], datetime) else row[1],
-                "donor_id": row[4],  # Include donor_id in response
-                "donor_name": donor_name,
+                "donor_name": row[1],
                 "amount": row[2],
-                "project": project,
-                "status": "completed"
+                "payment_method": row[3],
+                "date": row[4].strftime("%Y-%m-%d") if isinstance(row[4], date) else row[4],
+                "project": row[5],
+                "notes": row[6],
+                "status": row[7]
             })
             
         return {"donations": donations}
