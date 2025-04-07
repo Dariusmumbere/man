@@ -1892,7 +1892,7 @@ def get_donors(search: Optional[str] = None):
         conn = get_db()
         cursor = conn.cursor()
         
-        # Distinct query to ensure unique donors
+        # Use DISTINCT ON to ensure unique donors
         if search:
             cursor.execute('''
                 SELECT DISTINCT ON (id) id, name, email, phone, address, donor_type, notes, category, created_at
