@@ -154,7 +154,7 @@ class Donation(BaseModel):
     donor_name: str
     amount: float
     payment_method: str
-    date: str
+    date: date
     project: Optional[str] = None
     notes: Optional[str] = None
     status: str = "pending"  # "pending", "completed"
