@@ -2222,42 +2222,53 @@ def update_donor(donor_id: int, donor: DonorCreate):
         if conn:
             conn.close()
 
-@app.get("/donors/stats/")
-def get_donor_stats():
-    conn = None
+@app.post("/donors/stats/reset/")
+def drop_and_recreate_donor_stats():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        
-        # Get donation statistics grouped by donor
+
+        # Drop if exists
+        cursor.execute("DROP TABLE IF EXISTS donor_stats")
+
+        # Recreate table
         cursor.execute('''
-            SELECT d.id as donor_id, d.name, 
-                   COUNT(t.id) as donation_count,
-                   SUM(t.amount) as total_donated,
-                   MIN(t.date) as first_donation,
-                   MAX(t.date) as last_donation
+            CREATE TABLE donor_stats (
+                donor_id INTEGER PRIMARY KEY,
+                name TEXT,
+                donation_count INTEGER,
+                total_donated REAL,
+                first_donation DATE,
+                last_donation DATE
+            )
+        ''')
+
+        # Re-populate table
+        cursor.execute('''
+            INSERT INTO donor_stats (donor_id, name, donation_count, total_donated, first_donation, last_donation)
+            SELECT d.id, d.name, 
+                   COUNT(t.id),
+                   SUM(t.amount),
+                   MIN(t.date),
+                   MAX(t.date)
             FROM donors d
-            LEFT JOIN transactions t ON t.purpose LIKE 'Donation from ' || d.name || '%' AND t.type = 'deposit'
+            LEFT JOIN transactions t 
+              ON t.purpose LIKE 'Donation from ' || d.name || '%' 
+             AND t.type = 'deposit'
             GROUP BY d.id, d.name
         ''')
-        
-        stats = {}
-        for row in cursor.fetchall():
-            stats[row[0]] = {  # donor_id as key
-                "name": row[1],
-                "donation_count": row[2] or 0,
-                "total_donated": float(row[3] or 0),
-                "first_donation": row[4].strftime("%Y-%m-%d") if row[4] else None,
-                "last_donation": row[5].strftime("%Y-%m-%d") if row[5] else None
-            }
-            
-        return {"donor_stats": stats}
+
+        conn.commit()
+        return {"message": "Donor stats table reset and repopulated successfully."}
+
     except Exception as e:
-        logger.error(f"Error fetching donor stats: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch donor stats")
+        logger.error(f"Error resetting donor stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset donor stats")
+
     finally:
         if conn:
             conn.close()
+
 
 # Run the application
 if __name__ == "__main__":
