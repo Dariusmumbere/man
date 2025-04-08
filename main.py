@@ -140,7 +140,16 @@ class FolderContents(BaseModel):
 
 class FolderCreate(BaseModel):
     name: str
-
+    
+class DonorCreate(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    donor_type: Optional[str] = None
+    notes: Optional[str] = None
+    category: Optional[str] = "one-time"
+    
 class Donation(BaseModel):
     donor_name: str
     amount: float
