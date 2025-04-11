@@ -177,6 +177,26 @@ class DonationCreate(BaseModel):
     project: Optional[str] = None
     notes: Optional[str] = None
 
+class ProjectCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    start_date: str
+    end_date: str
+    budget: float
+    funding_source: str
+    status: str = "planned"
+
+class Project(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    start_date: str
+    end_date: str
+    budget: float
+    funding_source: str
+    status: str
+    created_at: datetime
+
     
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -353,6 +373,20 @@ def init_db():
                 size INTEGER NOT NULL,
                 folder_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
                 path TEXT NOT NULL
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS projects (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                budget REAL NOT NULL,
+                funding_source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         cursor.execute('SELECT id FROM folders WHERE id = %s', ('root',))
@@ -2253,6 +2287,144 @@ def get_donor_stats():
     except Exception as e:
         logger.error(f"Error fetching donor stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch donor stats")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/projects/", response_model=Project)
+def create_project(project: ProjectCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO projects (name, description, start_date, end_date, budget, funding_source, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, description, start_date, end_date, budget, funding_source, status, created_at
+        ''', (
+            project.name,
+            project.description,
+            project.start_date,
+            project.end_date,
+            project.budget,
+            project.funding_source,
+            project.status
+        ))
+        
+        new_project = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_project[0],
+            "name": new_project[1],
+            "description": new_project[2],
+            "start_date": new_project[3].strftime("%Y-%m-%d"),
+            "end_date": new_project[4].strftime("%Y-%m-%d"),
+            "budget": new_project[5],
+            "funding_source": new_project[6],
+            "status": new_project[7],
+            "created_at": new_project[8]
+        }
+    except Exception as e:
+        logger.error(f"Error creating project: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/projects/")
+def get_projects():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, description, start_date, end_date, budget, funding_source, status, created_at
+            FROM projects
+            ORDER BY created_at DESC
+        ''')
+        
+        projects = []
+        for row in cursor.fetchall():
+            projects.append({
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "start_date": row[3].strftime("%Y-%m-%d"),
+                "end_date": row[4].strftime("%Y-%m-%d"),
+                "budget": row[5],
+                "funding_source": row[6],
+                "status": row[7],
+                "created_at": row[8].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return {"projects": projects}
+    except Exception as e:
+        logger.error(f"Error fetching projects: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch projects")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/projects/{project_id}")
+def get_project(project_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, description, start_date, end_date, budget, funding_source, status, created_at
+            FROM projects
+            WHERE id = %s
+        ''', (project_id,))
+        
+        project = cursor.fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        return {
+            "id": project[0],
+            "name": project[1],
+            "description": project[2],
+            "start_date": project[3].strftime("%Y-%m-%d"),
+            "end_date": project[4].strftime("%Y-%m-%d"),
+            "budget": project[5],
+            "funding_source": project[6],
+            "status": project[7],
+            "created_at": project[8].strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.error(f"Error fetching project: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch project")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id FROM projects WHERE id = %s', (project_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        cursor.execute('DELETE FROM projects WHERE id = %s', (project_id,))
+        conn.commit()
+        
+        return {"message": "Project deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting project: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete project")
     finally:
         if conn:
             conn.close()
