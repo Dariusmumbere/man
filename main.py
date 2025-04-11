@@ -411,7 +411,7 @@ def init_db():
             )
         ''')
 
-         cursor.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS activities (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -422,8 +422,8 @@ def init_db():
                 budget REAL NOT NULL,
                 status TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+             )
+         ''')
 
         cursor.execute('SELECT id FROM folders WHERE id = %s', ('root',))
         if not cursor.fetchone():
