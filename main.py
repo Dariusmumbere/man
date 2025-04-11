@@ -196,6 +196,27 @@ class Project(BaseModel):
     funding_source: str
     status: str
     created_at: datetime
+    
+class ActivityCreate(BaseModel):
+    name: str
+    project_id: int
+    description: Optional[str] = None
+    start_date: str
+    end_date: str
+    budget: float
+    status: str = "planned"
+
+class Activity(BaseModel):
+    id: int
+    name: str
+    project_id: int
+    project_name: str
+    description: Optional[str] = None
+    start_date: str
+    end_date: str
+    budget: float
+    status: str
+    created_at: datetime
 
     
 # File storage setup
@@ -389,6 +410,21 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS activities (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                project_id INTEGER REFERENCES projects(id),
+                description TEXT,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                budget REAL NOT NULL,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         cursor.execute('SELECT id FROM folders WHERE id = %s', ('root',))
         if not cursor.fetchone():
             cursor.execute('INSERT INTO folders (id, name) VALUES (%s, %s)', ('root', 'Fundraising Documents'))
@@ -2425,6 +2461,219 @@ def delete_project(project_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete project")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/activities/", response_model=Activity)
+def create_activity(activity: ActivityCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First verify the project exists
+        cursor.execute('SELECT name FROM projects WHERE id = %s', (activity.project_id,))
+        project = cursor.fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        project_name = project[0]
+        
+        cursor.execute('''
+            INSERT INTO activities (name, project_id, description, start_date, end_date, budget, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, project_id, description, start_date, end_date, budget, status, created_at
+        ''', (
+            activity.name,
+            activity.project_id,
+            activity.description,
+            activity.start_date,
+            activity.end_date,
+            activity.budget,
+            activity.status
+        ))
+        
+        new_activity = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_activity[0],
+            "name": new_activity[1],
+            "project_id": new_activity[2],
+            "project_name": project_name,
+            "description": new_activity[3],
+            "start_date": new_activity[4].strftime("%Y-%m-%d"),
+            "end_date": new_activity[5].strftime("%Y-%m-%d"),
+            "budget": new_activity[6],
+            "status": new_activity[7],
+            "created_at": new_activity[8].strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.error(f"Error creating activity: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/activities/", response_model=List[Activity])
+def get_activities():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT a.id, a.name, a.project_id, p.name as project_name, 
+                   a.description, a.start_date, a.end_date, 
+                   a.budget, a.status, a.created_at
+            FROM activities a
+            JOIN projects p ON a.project_id = p.id
+            ORDER BY a.created_at DESC
+        ''')
+        
+        activities = []
+        for row in cursor.fetchall():
+            activities.append({
+                "id": row[0],
+                "name": row[1],
+                "project_id": row[2],
+                "project_name": row[3],
+                "description": row[4],
+                "start_date": row[5].strftime("%Y-%m-%d"),
+                "end_date": row[6].strftime("%Y-%m-%d"),
+                "budget": row[7],
+                "status": row[8],
+                "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return activities
+    except Exception as e:
+        logger.error(f"Error fetching activities: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch activities")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/activities/{activity_id}", response_model=Activity)
+def get_activity(activity_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT a.id, a.name, a.project_id, p.name as project_name, 
+                   a.description, a.start_date, a.end_date, 
+                   a.budget, a.status, a.created_at
+            FROM activities a
+            JOIN projects p ON a.project_id = p.id
+            WHERE a.id = %s
+        ''', (activity_id,))
+        
+        activity = cursor.fetchone()
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        return {
+            "id": activity[0],
+            "name": activity[1],
+            "project_id": activity[2],
+            "project_name": activity[3],
+            "description": activity[4],
+            "start_date": activity[5].strftime("%Y-%m-%d"),
+            "end_date": activity[6].strftime("%Y-%m-%d"),
+            "budget": activity[7],
+            "status": activity[8],
+            "created_at": activity[9].strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.error(f"Error fetching activity: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch activity")
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/activities/{activity_id}", response_model=Activity)
+def update_activity(activity_id: int, activity: ActivityCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First verify the project exists
+        cursor.execute('SELECT name FROM projects WHERE id = %s', (activity.project_id,))
+        project = cursor.fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        project_name = project[0]
+        
+        cursor.execute('''
+            UPDATE activities
+            SET name = %s, project_id = %s, description = %s, 
+                start_date = %s, end_date = %s, budget = %s, status = %s
+            WHERE id = %s
+            RETURNING id, name, project_id, description, start_date, end_date, budget, status, created_at
+        ''', (
+            activity.name,
+            activity.project_id,
+            activity.description,
+            activity.start_date,
+            activity.end_date,
+            activity.budget,
+            activity.status,
+            activity_id
+        ))
+        
+        updated_activity = cursor.fetchone()
+        if not updated_activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        conn.commit()
+        return {
+            "id": updated_activity[0],
+            "name": updated_activity[1],
+            "project_id": updated_activity[2],
+            "project_name": project_name,
+            "description": updated_activity[3],
+            "start_date": updated_activity[4].strftime("%Y-%m-%d"),
+            "end_date": updated_activity[5].strftime("%Y-%m-%d"),
+            "budget": updated_activity[6],
+            "status": updated_activity[7],
+            "created_at": updated_activity[8].strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.error(f"Error updating activity: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/activities/{activity_id}")
+def delete_activity(activity_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id FROM activities WHERE id = %s', (activity_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        cursor.execute('DELETE FROM activities WHERE id = %s', (activity_id,))
+        conn.commit()
+        
+        return {"message": "Activity deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting activity: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete activity")
     finally:
         if conn:
             conn.close()
