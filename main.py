@@ -185,7 +185,6 @@ class ProjectCreate(BaseModel):
     budget: float
     funding_source: str
     status: str = "planned"
-    thematic_area: Optional[str] = None  # Add this field
 
 class Project(BaseModel):
     id: int
@@ -196,7 +195,6 @@ class Project(BaseModel):
     budget: float
     funding_source: str
     status: str
-    thematic_area: Optional[str] = None  # Add this field
     created_at: datetime
     
 class ActivityCreate(BaseModel):
@@ -409,7 +407,6 @@ def init_db():
                 budget REAL NOT NULL,
                 funding_source TEXT NOT NULL,
                 status TEXT NOT NULL,
-                thematic_area TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -2330,7 +2327,7 @@ def get_donor_stats():
         if conn:
             conn.close()
 
-@app.post("/api/projects/", response_model=Project)
+@app.post("/projects/", response_model=Project)
 def create_project(project: ProjectCreate):
     conn = None
     try:
@@ -2338,11 +2335,9 @@ def create_project(project: ProjectCreate):
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO projects (name, description, start_date, end_date, 
-                                budget, funding_source, status, thematic_area)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, name, description, start_date, end_date, 
-                     budget, funding_source, status, thematic_area, created_at
+            INSERT INTO projects (name, description, start_date, end_date, budget, funding_source, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, description, start_date, end_date, budget, funding_source, status, created_at
         ''', (
             project.name,
             project.description,
@@ -2350,8 +2345,7 @@ def create_project(project: ProjectCreate):
             project.end_date,
             project.budget,
             project.funding_source,
-            project.status,
-            project.thematic_area
+            project.status
         ))
         
         new_project = cursor.fetchone()
@@ -2366,8 +2360,7 @@ def create_project(project: ProjectCreate):
             "budget": new_project[5],
             "funding_source": new_project[6],
             "status": new_project[7],
-            "thematic_area": new_project[8],
-            "created_at": new_project[9].strftime("%Y-%m-%d %H:%M:%S")
+            "created_at": new_project[8]
         }
     except Exception as e:
         logger.error(f"Error creating project: {e}")
@@ -2681,44 +2674,6 @@ def delete_activity(activity_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete activity")
-    finally:
-        if conn:
-            conn.close()
-            
-@app.get("/api/thematic-areas/{thematic_area}/projects")
-def get_thematic_projects(thematic_area: str):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, name, description, start_date, end_date, budget, 
-                   funding_source, status, thematic_area, created_at
-            FROM projects
-            WHERE thematic_area = %s
-            ORDER BY created_at DESC
-        ''', (thematic_area,))
-        
-        projects = []
-        for row in cursor.fetchall():
-            projects.append({
-                "id": row[0],
-                "name": row[1],
-                "description": row[2],
-                "start_date": row[3].strftime("%Y-%m-%d"),
-                "end_date": row[4].strftime("%Y-%m-%d"),
-                "budget": row[5],
-                "funding_source": row[6],
-                "status": row[7],
-                "thematic_area": row[8],
-                "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S")
-            })
-            
-        return {"projects": projects}
-    except Exception as e:
-        logger.error(f"Error fetching thematic projects: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch thematic projects")
     finally:
         if conn:
             conn.close()
