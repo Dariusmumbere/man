@@ -185,7 +185,8 @@ class ProjectCreate(BaseModel):
     budget: float
     funding_source: str
     status: str = "planned"
-
+    thematic_area: str
+    
 class Project(BaseModel):
     id: int
     name: str
@@ -407,6 +408,7 @@ def init_db():
                 budget REAL NOT NULL,
                 funding_source TEXT NOT NULL,
                 status TEXT NOT NULL,
+                thematic_area TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -2335,9 +2337,13 @@ def create_project(project: ProjectCreate):
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO projects (name, description, start_date, end_date, budget, funding_source, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, name, description, start_date, end_date, budget, funding_source, status, created_at
+            INSERT INTO projects (
+                name, description, start_date, end_date, 
+                budget, funding_source, status, thematic_area
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, description, start_date, end_date, 
+                      budget, funding_source, status, thematic_area, created_at
         ''', (
             project.name,
             project.description,
@@ -2345,7 +2351,8 @@ def create_project(project: ProjectCreate):
             project.end_date,
             project.budget,
             project.funding_source,
-            project.status
+            project.status,
+            project.thematic_area
         ))
         
         new_project = cursor.fetchone()
@@ -2360,7 +2367,8 @@ def create_project(project: ProjectCreate):
             "budget": new_project[5],
             "funding_source": new_project[6],
             "status": new_project[7],
-            "created_at": new_project[8]
+            "thematic_area": new_project[8],
+            "created_at": new_project[9].strftime("%Y-%m-%d %H:%M:%S")
         }
     except Exception as e:
         logger.error(f"Error creating project: {e}")
@@ -2372,17 +2380,26 @@ def create_project(project: ProjectCreate):
             conn.close()
 
 @app.get("/projects/")
-def get_projects():
+def get_projects(thematic_area: str = None):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
         
-        cursor.execute('''
-            SELECT id, name, description, start_date, end_date, budget, funding_source, status, created_at
+        query = '''
+            SELECT id, name, description, start_date, end_date, 
+                   budget, funding_source, status, thematic_area, created_at
             FROM projects
-            ORDER BY created_at DESC
-        ''')
+        '''
+        
+        params = []
+        if thematic_area:
+            query += ' WHERE thematic_area = %s'
+            params.append(thematic_area)
+            
+        query += ' ORDER BY created_at DESC'
+        
+        cursor.execute(query, params)
         
         projects = []
         for row in cursor.fetchall():
@@ -2395,7 +2412,8 @@ def get_projects():
                 "budget": row[5],
                 "funding_source": row[6],
                 "status": row[7],
-                "created_at": row[8].strftime("%Y-%m-%d %H:%M:%S")
+                "thematic_area": row[8],
+                "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S")
             })
             
         return {"projects": projects}
