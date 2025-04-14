@@ -2330,7 +2330,7 @@ def get_donor_stats():
         if conn:
             conn.close()
 
-@app.post("/projects/", response_model=Project)
+@app.post("/api/projects/", response_model=Project)
 def create_project(project: ProjectCreate):
     conn = None
     try:
@@ -2338,9 +2338,11 @@ def create_project(project: ProjectCreate):
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO projects (name, description, start_date, end_date, budget, funding_source, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, name, description, start_date, end_date, budget, funding_source, status, created_at
+            INSERT INTO projects (name, description, start_date, end_date, 
+                                budget, funding_source, status, thematic_area)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, description, start_date, end_date, 
+                     budget, funding_source, status, thematic_area, created_at
         ''', (
             project.name,
             project.description,
@@ -2348,7 +2350,8 @@ def create_project(project: ProjectCreate):
             project.end_date,
             project.budget,
             project.funding_source,
-            project.status
+            project.status,
+            project.thematic_area
         ))
         
         new_project = cursor.fetchone()
@@ -2363,7 +2366,8 @@ def create_project(project: ProjectCreate):
             "budget": new_project[5],
             "funding_source": new_project[6],
             "status": new_project[7],
-            "created_at": new_project[8]
+            "thematic_area": new_project[8],
+            "created_at": new_project[9].strftime("%Y-%m-%d %H:%M:%S")
         }
     except Exception as e:
         logger.error(f"Error creating project: {e}")
@@ -2680,6 +2684,7 @@ def delete_activity(activity_id: int):
     finally:
         if conn:
             conn.close()
+            
 @app.get("/api/thematic-areas/{thematic_area}/projects")
 def get_thematic_projects(thematic_area: str):
     conn = None
@@ -2714,53 +2719,6 @@ def get_thematic_projects(thematic_area: str):
     except Exception as e:
         logger.error(f"Error fetching thematic projects: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch thematic projects")
-    finally:
-        if conn:
-            conn.close()
-@app.post("/api/projects/", response_model=Project)
-def create_project(project: ProjectCreate):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO projects (name, description, start_date, end_date, 
-                                budget, funding_source, status, thematic_area)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, name, description, start_date, end_date, 
-                     budget, funding_source, status, thematic_area, created_at
-        ''', (
-            project.name,
-            project.description,
-            project.start_date,
-            project.end_date,
-            project.budget,
-            project.funding_source,
-            project.status,
-            project.thematic_area
-        ))
-        
-        new_project = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "id": new_project[0],
-            "name": new_project[1],
-            "description": new_project[2],
-            "start_date": new_project[3].strftime("%Y-%m-%d"),
-            "end_date": new_project[4].strftime("%Y-%m-%d"),
-            "budget": new_project[5],
-            "funding_source": new_project[6],
-            "status": new_project[7],
-            "thematic_area": new_project[8],
-            "created_at": new_project[9].strftime("%Y-%m-%d %H:%M:%S")
-        }
-    except Exception as e:
-        logger.error(f"Error creating project: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
             conn.close()
