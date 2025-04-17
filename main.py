@@ -218,7 +218,19 @@ class Activity(BaseModel):
     status: str
     created_at: datetime
 
-    
+class BudgetItemCreate(BaseModel):
+    project_id: int
+    item_name: str
+    description: Optional[str] = None
+    quantity: float
+    unit_price: float
+    category: str
+
+class BudgetItem(BudgetItemCreate):
+    id: int
+    total: float
+    created_at: datetime
+
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -424,6 +436,19 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
              )
          ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budget_items (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                item_name TEXT NOT NULL,
+                description TEXT,
+                quantity REAL NOT NULL,
+                unit_price REAL NOT NULL,
+                total REAL GENERATED ALWAYS AS (quantity * unit_price) STORED,
+                category TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
         cursor.execute('SELECT id FROM folders WHERE id = %s', ('root',))
         if not cursor.fetchone():
@@ -2676,7 +2701,113 @@ def delete_activity(activity_id: int):
     finally:
         if conn:
             conn.close()
+@app.post("/budget-items/", response_model=BudgetItem)
+def create_budget_item(budget_item: BudgetItemCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify project exists
+        cursor.execute('SELECT id FROM projects WHERE id = %s', (budget_item.project_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        cursor.execute('''
+            INSERT INTO budget_items (project_id, item_name, description, quantity, unit_price, category)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, project_id, item_name, description, quantity, unit_price, total, category, created_at
+        ''', (
+            budget_item.project_id,
+            budget_item.item_name,
+            budget_item.description,
+            budget_item.quantity,
+            budget_item.unit_price,
+            budget_item.category
+        ))
+        
+        new_item = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_item[0],
+            "project_id": new_item[1],
+            "item_name": new_item[2],
+            "description": new_item[3],
+            "quantity": new_item[4],
+            "unit_price": new_item[5],
+            "total": new_item[6],
+            "category": new_item[7],
+            "created_at": new_item[8]
+        }
+    except Exception as e:
+        logger.error(f"Error creating budget item: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
+@app.get("/budget-items/{project_id}", response_model=List[BudgetItem])
+def get_budget_items(project_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, project_id, item_name, description, quantity, unit_price, total, category, created_at
+            FROM budget_items
+            WHERE project_id = %s
+            ORDER BY created_at DESC
+        ''', (project_id,))
+        
+        items = []
+        for row in cursor.fetchall():
+            items.append({
+                "id": row[0],
+                "project_id": row[1],
+                "item_name": row[2],
+                "description": row[3],
+                "quantity": row[4],
+                "unit_price": row[5],
+                "total": row[6],
+                "category": row[7],
+                "created_at": row[8].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return items
+    except Exception as e:
+        logger.error(f"Error fetching budget items: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch budget items")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/budget-items/{item_id}")
+def delete_budget_item(item_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM budget_items WHERE id = %s RETURNING id', (item_id,))
+        deleted_item = cursor.fetchone()
+        if not deleted_item:
+            raise HTTPException(status_code=404, detail="Budget item not found")
+            
+        conn.commit()
+        return {"message": "Budget item deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting budget item: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete budget item")
+    finally:
+        if conn:
+            conn.close()
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
