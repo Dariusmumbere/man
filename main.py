@@ -2601,8 +2601,7 @@ def update_activity(activity_id: int, activity: ActivityCreate):
     conn = None
     try:
         conn = get_db()
-        cursor = conn.cursor()
-        
+        cursor = conn.cursor()        
         # First verify the project exists
         cursor.execute('SELECT name FROM projects WHERE id = %s', (activity.project_id,))
         project = cursor.fetchone()
