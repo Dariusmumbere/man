@@ -259,6 +259,24 @@ class Deployment(BaseModel):
     project_name: str
     role: str
     created_at: datetime
+class WorkOpportunityCreate(BaseModel):
+    title: str
+    description: str
+    status: str = "open"
+
+class WorkOpportunity(WorkOpportunityCreate):
+    id: int
+    created_at: datetime
+
+class OpportunityAssignmentCreate(BaseModel):
+    opportunity_id: int
+    employee_id: int
+
+class OpportunityAssignment(OpportunityAssignmentCreate):
+    id: int
+    employee_name: str
+    opportunity_title: str
+    created_at: datetime
 
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -502,6 +520,25 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS work_opportunities (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS opportunity_assignments (
+                id SERIAL PRIMARY KEY,
+                opportunity_id INTEGER NOT NULL REFERENCES work_opportunities(id) ON DELETE CASCADE,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
 
         cursor.execute('SELECT id FROM folders WHERE id = %s', ('root',))
         if not cursor.fetchone():
@@ -3101,6 +3138,182 @@ def delete_deployment(deployment_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete deployment")
+    finally:
+        if conn:
+            conn.close()
+@app.post("/work-opportunities/", response_model=WorkOpportunity)
+def create_work_opportunity(opportunity: WorkOpportunityCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO work_opportunities (title, description, status)
+            VALUES (%s, %s, %s)
+            RETURNING id, title, description, status, created_at
+        ''', (
+            opportunity.title,
+            opportunity.description,
+            opportunity.status
+        ))
+        
+        new_opportunity = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_opportunity[0],
+            "title": new_opportunity[1],
+            "description": new_opportunity[2],
+            "status": new_opportunity[3],
+            "created_at": new_opportunity[4]
+        }
+    except Exception as e:
+        logger.error(f"Error creating work opportunity: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/work-opportunities/", response_model=List[WorkOpportunity])
+def get_work_opportunities():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, title, description, status, created_at
+            FROM work_opportunities
+            ORDER BY created_at DESC
+        ''')
+        
+        opportunities = []
+        for row in cursor.fetchall():
+            opportunities.append({
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "status": row[3],
+                "created_at": row[4].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return opportunities
+    except Exception as e:
+        logger.error(f"Error fetching work opportunities: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch work opportunities")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/opportunity-assignments/", response_model=OpportunityAssignment)
+def create_opportunity_assignment(assignment: OpportunityAssignmentCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify opportunity exists
+        cursor.execute('SELECT title FROM work_opportunities WHERE id = %s', (assignment.opportunity_id,))
+        opportunity = cursor.fetchone()
+        if not opportunity:
+            raise HTTPException(status_code=404, detail="Opportunity not found")
+        opportunity_title = opportunity[0]
+        
+        # Verify employee exists
+        cursor.execute('SELECT name FROM employees WHERE id = %s', (assignment.employee_id,))
+        employee = cursor.fetchone()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        employee_name = employee[0]
+        
+        cursor.execute('''
+            INSERT INTO opportunity_assignments (opportunity_id, employee_id)
+            VALUES (%s, %s)
+            RETURNING id, opportunity_id, employee_id, created_at
+        ''', (
+            assignment.opportunity_id,
+            assignment.employee_id
+        ))
+        
+        new_assignment = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_assignment[0],
+            "opportunity_id": new_assignment[1],
+            "opportunity_title": opportunity_title,
+            "employee_id": new_assignment[2],
+            "employee_name": employee_name,
+            "created_at": new_assignment[3].strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.error(f"Error creating opportunity assignment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/opportunity-assignments/{opportunity_id}", response_model=List[OpportunityAssignment])
+def get_opportunity_assignments(opportunity_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT oa.id, oa.opportunity_id, w.title as opportunity_title,
+                   oa.employee_id, e.name as employee_name, oa.created_at
+            FROM opportunity_assignments oa
+            JOIN work_opportunities w ON oa.opportunity_id = w.id
+            JOIN employees e ON oa.employee_id = e.id
+            WHERE oa.opportunity_id = %s
+            ORDER BY oa.created_at DESC
+        ''', (opportunity_id,))
+        
+        assignments = []
+        for row in cursor.fetchall():
+            assignments.append({
+                "id": row[0],
+                "opportunity_id": row[1],
+                "opportunity_title": row[2],
+                "employee_id": row[3],
+                "employee_name": row[4],
+                "created_at": row[5].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return assignments
+    except Exception as e:
+        logger.error(f"Error fetching opportunity assignments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch opportunity assignments")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/opportunity-assignments/{assignment_id}")
+def delete_opportunity_assignment(assignment_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM opportunity_assignments WHERE id = %s RETURNING id', (assignment_id,))
+        deleted = cursor.fetchone()
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+            
+        conn.commit()
+        return {"message": "Assignment deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting opportunity assignment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete opportunity assignment")
     finally:
         if conn:
             conn.close()
