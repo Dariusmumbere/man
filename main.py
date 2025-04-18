@@ -230,6 +230,34 @@ class BudgetItem(BudgetItemCreate):
     id: int
     total: float
     created_at: datetime
+class EmployeeCreate(BaseModel):
+    name: str
+    nin: str
+    dob: str
+    qualification: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    status: str = "active"
+
+class Employee(EmployeeCreate):
+    id: int
+    created_at: datetime
+
+class DeploymentCreate(BaseModel):
+    employee_id: int
+    activity_id: int
+    role: str
+
+class Deployment(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: str
+    activity_id: int
+    activity_name: str
+    project_name: str
+    role: str
+    created_at: datetime
 
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -446,6 +474,30 @@ def init_db():
                 unit_price REAL NOT NULL,
                 total REAL GENERATED ALWAYS AS (quantity * unit_price) STORED,
                 category TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS employees (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                nin TEXT NOT NULL UNIQUE,
+                dob DATE NOT NULL,
+                qualification TEXT NOT NULL,
+                email TEXT,
+                phone TEXT,
+                address TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS deployments (
+                id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -2804,6 +2856,237 @@ def delete_budget_item(item_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete budget item")
+    finally:
+        if conn:
+            conn.close()
+@app.post("/employees/", response_model=Employee)
+def create_employee(employee: EmployeeCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO employees (name, nin, dob, qualification, email, phone, address, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, name, nin, dob, qualification, email, phone, address, status, created_at
+        ''', (
+            employee.name,
+            employee.nin,
+            employee.dob,
+            employee.qualification,
+            employee.email,
+            employee.phone,
+            employee.address,
+            employee.status
+        ))
+        
+        new_employee = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_employee[0],
+            "name": new_employee[1],
+            "nin": new_employee[2],
+            "dob": new_employee[3].strftime("%Y-%m-%d"),
+            "qualification": new_employee[4],
+            "email": new_employee[5],
+            "phone": new_employee[6],
+            "address": new_employee[7],
+            "status": new_employee[8],
+            "created_at": new_employee[9]
+        }
+    except psycopg2.IntegrityError as e:
+        if "employees_nin_key" in str(e):
+            raise HTTPException(status_code=400, detail="NIN already exists")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating employee: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/employees/", response_model=List[Employee])
+def get_employees():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, nin, dob, qualification, email, phone, address, status, created_at
+            FROM employees
+            ORDER BY created_at DESC
+        ''')
+        
+        employees = []
+        for row in cursor.fetchall():
+            employees.append({
+                "id": row[0],
+                "name": row[1],
+                "nin": row[2],
+                "dob": row[3].strftime("%Y-%m-%d"),
+                "qualification": row[4],
+                "email": row[5],
+                "phone": row[6],
+                "address": row[7],
+                "status": row[8],
+                "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return employees
+    except Exception as e:
+        logger.error(f"Error fetching employees: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch employees")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/employees/{employee_id}")
+def delete_employee(employee_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM employees WHERE id = %s RETURNING id', (employee_id,))
+        deleted = cursor.fetchone()
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Employee not found")
+            
+        conn.commit()
+        return {"message": "Employee deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting employee: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete employee")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/deployments/", response_model=Deployment)
+def create_deployment(deployment: DeploymentCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify employee exists
+        cursor.execute('SELECT name FROM employees WHERE id = %s', (deployment.employee_id,))
+        employee = cursor.fetchone()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        employee_name = employee[0]
+        
+        # Verify activity exists and get project name
+        cursor.execute('''
+            SELECT a.name, p.name 
+            FROM activities a
+            JOIN projects p ON a.project_id = p.id
+            WHERE a.id = %s
+        ''', (deployment.activity_id,))
+        activity = cursor.fetchone()
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        activity_name = activity[0]
+        project_name = activity[1]
+        
+        cursor.execute('''
+            INSERT INTO deployments (employee_id, activity_id, role)
+            VALUES (%s, %s, %s)
+            RETURNING id, employee_id, activity_id, role, created_at
+        ''', (
+            deployment.employee_id,
+            deployment.activity_id,
+            deployment.role
+        ))
+        
+        new_deployment = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_deployment[0],
+            "employee_id": new_deployment[1],
+            "employee_name": employee_name,
+            "activity_id": new_deployment[2],
+            "activity_name": activity_name,
+            "project_name": project_name,
+            "role": new_deployment[3],
+            "created_at": new_deployment[4].strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.error(f"Error creating deployment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/deployments/", response_model=List[Deployment])
+def get_deployments():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT d.id, d.employee_id, e.name as employee_name, 
+                   d.activity_id, a.name as activity_name, p.name as project_name,
+                   d.role, d.created_at
+            FROM deployments d
+            JOIN employees e ON d.employee_id = e.id
+            JOIN activities a ON d.activity_id = a.id
+            JOIN projects p ON a.project_id = p.id
+            ORDER BY d.created_at DESC
+        ''')
+        
+        deployments = []
+        for row in cursor.fetchall():
+            deployments.append({
+                "id": row[0],
+                "employee_id": row[1],
+                "employee_name": row[2],
+                "activity_id": row[3],
+                "activity_name": row[4],
+                "project_name": row[5],
+                "role": row[6],
+                "created_at": row[7].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return deployments
+    except Exception as e:
+        logger.error(f"Error fetching deployments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch deployments")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/deployments/{deployment_id}")
+def delete_deployment(deployment_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM deployments WHERE id = %s RETURNING id', (deployment_id,))
+        deleted = cursor.fetchone()
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+            
+        conn.commit()
+        return {"message": "Deployment deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting deployment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete deployment")
     finally:
         if conn:
             conn.close()
