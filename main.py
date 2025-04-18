@@ -230,6 +230,7 @@ class BudgetItem(BudgetItemCreate):
     id: int
     total: float
     created_at: datetime
+    
 class EmployeeCreate(BaseModel):
     name: str
     nin: str
