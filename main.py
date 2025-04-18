@@ -2866,6 +2866,12 @@ def create_employee(employee: EmployeeCreate):
         conn = get_db()
         cursor = conn.cursor()
         
+        # Validate date format
+        try:
+            dob = datetime.strptime(employee.dob, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
         cursor.execute('''
             INSERT INTO employees (name, nin, dob, qualification, email, phone, address, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -2873,7 +2879,7 @@ def create_employee(employee: EmployeeCreate):
         ''', (
             employee.name,
             employee.nin,
-            employee.dob,
+            dob,
             employee.qualification,
             employee.email,
             employee.phone,
@@ -2894,17 +2900,24 @@ def create_employee(employee: EmployeeCreate):
             "phone": new_employee[6],
             "address": new_employee[7],
             "status": new_employee[8],
-            "created_at": new_employee[9]
+            "created_at": new_employee[9].strftime("%Y-%m-%d %H:%M:%S")
         }
     except psycopg2.IntegrityError as e:
         if "employees_nin_key" in str(e):
             raise HTTPException(status_code=400, detail="NIN already exists")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error creating employee: {e}")
+        logger.error(f"Error creating employee: {str(e)}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Failed to create employee",
+                "error": str(e),
+                "type": type(e).__name__
+            }
+        )
     finally:
         if conn:
             conn.close()
