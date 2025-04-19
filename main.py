@@ -3602,6 +3602,50 @@ def get_employee_payments(employee_id: int):
     finally:
         if conn:
             conn.close()
+@app.get("/payments/", response_model=List[Payment])
+def get_payments(status: str = None):
+    """Get all payments with optional status filter"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        query = '''
+            SELECT p.id, p.employee_id, e.name as employee_name, 
+                   p.amount, p.description, p.payment_period, p.status, 
+                   p.created_at, p.approved_at, p.processed_at,
+                   p.approver_id, u.name as approver_name, p.remarks
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            LEFT JOIN users u ON p.approver_id = u.id
+        '''
+        
+        params = []
+        if status:
+            query += ' WHERE p.status = %s'
+            params.append(status)
+            
+        query += ' ORDER BY p.created_at DESC'
+        
+        cursor.execute(query, params)
+        
+        payments = []
+        for row in cursor.fetchall():
+            payments.append(dict(zip(
+                ['id', 'employee_id', 'employee_name', 'amount', 
+                 'description', 'payment_period', 'status', 'created_at',
+                 'approved_at', 'processed_at', 'approver_id', 
+                 'approver_name', 'remarks'],
+                row
+            )))
+        
+        return payments
+    except Exception as e:
+        logger.error(f"Error fetching payments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch payments")
+    finally:
+        if conn:
+            conn.close()
             
 # Run the application
 if __name__ == "__main__":
