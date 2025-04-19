@@ -278,6 +278,32 @@ class OpportunityAssignment(OpportunityAssignmentCreate):
     opportunity_title: str
     created_at: datetime
 
+class PaymentRequest(BaseModel):
+    employee_id: int
+    amount: float
+    description: str
+    payment_period: str  # e.g., "January 2024"
+
+class PaymentApproval(BaseModel):
+    payment_id: int
+    approved: bool
+    remarks: Optional[str] = None
+
+class Payment(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: str
+    amount: float
+    description: str
+    payment_period: str
+    status: str  # "pending", "approved", "rejected", "processed"
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    processed_at: Optional[datetime] = None
+    approver_id: Optional[int] = None
+    approver_name: Optional[str] = None
+    remarks: Optional[str] = None
+
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -536,6 +562,22 @@ def init_db():
                 opportunity_id INTEGER NOT NULL REFERENCES work_opportunities(id) ON DELETE CASCADE,
                 employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS payments (
+                id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                amount DECIMAL(10, 2) NOT NULL,
+                description TEXT,
+                payment_period TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP,
+                processed_at TIMESTAMP,
+                approver_id INTEGER,
+                remarks TEXT,
+                FOREIGN KEY (employee_id) REFERENCES employees(id)
             )
         ''')
 
@@ -3314,6 +3356,249 @@ def delete_opportunity_assignment(assignment_id: int):
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete opportunity assignment")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/payments/", response_model=Payment)
+def create_payment(payment: PaymentRequest):
+    """HR creates a payment request"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify employee exists
+        cursor.execute('SELECT name FROM employees WHERE id = %s', (payment.employee_id,))
+        employee = cursor.fetchone()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
+        # Create payment
+        cursor.execute('''
+            INSERT INTO payments (employee_id, amount, description, payment_period)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, employee_id, amount, description, payment_period, 
+                      status, created_at
+        ''', (
+            payment.employee_id, payment.amount, 
+            payment.description, payment.payment_period
+        ))
+        
+        payment_data = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": payment_data[0],
+            "employee_id": payment_data[1],
+            "employee_name": employee[0],
+            "amount": payment_data[2],
+            "description": payment_data[3],
+            "payment_period": payment_data[4],
+            "status": payment_data[5],
+            "created_at": payment_data[6]
+        }
+    except Exception as e:
+        logger.error(f"Error creating payment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create payment")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/payments/pending", response_model=List[Payment])
+def get_pending_payments():
+    """Director gets all pending payments for approval"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT p.id, p.employee_id, e.name as employee_name, 
+                   p.amount, p.description, p.payment_period, p.status, 
+                   p.created_at
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.status = 'pending'
+            ORDER BY p.created_at DESC
+        ''')
+        
+        payments = []
+        for row in cursor.fetchall():
+            payments.append(dict(zip(
+                ['id', 'employee_id', 'employee_name', 'amount', 
+                 'description', 'payment_period', 'status', 'created_at'],
+                row
+            )))
+        
+        return payments
+    except Exception as e:
+        logger.error(f"Error fetching pending payments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch pending payments")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/payments/approve", response_model=Payment)
+def approve_payment(approval: PaymentApproval, user_id: int = 1, username: str = "Director"):
+    """Director approves or rejects a payment"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get payment details
+        cursor.execute('''
+            SELECT p.id, p.employee_id, e.name as employee_name, 
+                   p.amount, p.description, p.payment_period, p.status
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.id = %s AND p.status = 'pending'
+        ''', (approval.payment_id,))
+        
+        payment = cursor.fetchone()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Pending payment not found")
+        
+        # Update payment status
+        new_status = "approved" if approval.approved else "rejected"
+        cursor.execute('''
+            UPDATE payments
+            SET status = %s,
+                approver_id = %s,
+                approved_at = CURRENT_TIMESTAMP,
+                remarks = %s
+            WHERE id = %s
+            RETURNING approved_at
+        ''', (new_status, user_id, approval.remarks, approval.payment_id))
+        
+        approved_at = cursor.fetchone()[0]
+        conn.commit()
+        
+        return {
+            "id": payment[0],
+            "employee_id": payment[1],
+            "employee_name": payment[2],
+            "amount": payment[3],
+            "description": payment[4],
+            "payment_period": payment[5],
+            "status": new_status,
+            "created_at": payment[6],
+            "approved_at": approved_at,
+            "approver_id": user_id,
+            "approver_name": username,
+            "remarks": approval.remarks
+        }
+    except Exception as e:
+        logger.error(f"Error approving payment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to process payment approval")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/payments/process/{payment_id}", response_model=Payment)
+def process_payment(payment_id: int):
+    """Finance processes an approved payment"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify payment is approved
+        cursor.execute('''
+            SELECT p.id, p.employee_id, e.name as employee_name, 
+                   p.amount, p.description, p.payment_period, p.status
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.id = %s AND p.status = 'approved'
+        ''', (payment_id,))
+        
+        payment = cursor.fetchone()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Approved payment not found")
+        
+        # Deduct from bank account
+        cursor.execute('''
+            UPDATE bank_account
+            SET balance = balance - %s
+            WHERE id = 1
+            RETURNING balance
+        ''', (payment[3],))
+        
+        new_balance = cursor.fetchone()[0]
+        if new_balance < 0:
+            raise HTTPException(status_code=400, detail="Insufficient funds")
+        
+        # Mark payment as processed
+        cursor.execute('''
+            UPDATE payments
+            SET status = 'processed',
+                processed_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING processed_at
+        ''', (payment_id,))
+        
+        processed_at = cursor.fetchone()[0]
+        conn.commit()
+        
+        return {
+            "id": payment[0],
+            "employee_id": payment[1],
+            "employee_name": payment[2],
+            "amount": payment[3],
+            "description": payment[4],
+            "payment_period": payment[5],
+            "status": "processed",
+            "created_at": payment[6],
+            "processed_at": processed_at
+        }
+    except Exception as e:
+        logger.error(f"Error processing payment: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to process payment")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/employees/{employee_id}/payments", response_model=List[Payment])
+def get_employee_payments(employee_id: int):
+    """Get payment history for an employee"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT p.id, p.employee_id, e.name as employee_name, 
+                   p.amount, p.description, p.payment_period, p.status, 
+                   p.created_at, p.approved_at, p.processed_at,
+                   p.approver_id, u.name as approver_name, p.remarks
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            LEFT JOIN users u ON p.approver_id = u.id
+            WHERE p.employee_id = %s
+            ORDER BY p.created_at DESC
+        ''', (employee_id,))
+        
+        payments = []
+        for row in cursor.fetchall():
+            payments.append(dict(zip(
+                ['id', 'employee_id', 'employee_name', 'amount', 
+                 'description', 'payment_period', 'status', 'created_at',
+                 'approved_at', 'processed_at', 'approver_id', 
+                 'approver_name', 'remarks'],
+                row
+            )))
+        
+        return payments
+    except Exception as e:
+        logger.error(f"Error fetching employee payments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch employee payments")
     finally:
         if conn:
             conn.close()
