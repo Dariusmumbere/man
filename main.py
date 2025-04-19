@@ -3617,7 +3617,6 @@ def get_payments(status: str = None):
                    p.approver_id, u.name as approver_name, p.remarks
             FROM payments p
             JOIN employees e ON p.employee_id = e.id
-            LEFT JOIN users u ON p.approver_id = u.id
         '''
         
         params = []
