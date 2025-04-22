@@ -288,7 +288,33 @@ class PaymentApproval(BaseModel):
     payment_id: int
     approved: bool
     remarks: Optional[str] = None
-    
+
+class PaymentRequest(BaseModel):
+    employee_id: int
+    amount: float
+    payment_period: str  # Format: YYYY-MM
+    description: Optional[str] = None
+    payment_method: str = "bank_transfer"  # or "mobile_money", "cash"
+
+class PaymentApproval(BaseModel):
+    payment_id: int
+    approved: bool
+    remarks: Optional[str] = None
+
+class Payment(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: str
+    amount: float
+    payment_period: str
+    description: Optional[str]
+    payment_method: str
+    status: str  # pending, approved, rejected
+    remarks: Optional[str]
+    created_at: datetime
+    approved_at: Optional[datetime]
+    processed_by: Optional[int]
+
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -3352,7 +3378,177 @@ def delete_opportunity_assignment(assignment_id: int):
     finally:
         if conn:
             conn.close()
+@app.post("/payments/request", response_model=Payment)
+def request_payment(payment: PaymentRequest):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify employee exists
+        cursor.execute("SELECT id FROM employees WHERE id = %s", (payment.employee_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
+        # Insert payment request
+        cursor.execute('''
+            INSERT INTO payments (
+                employee_id, amount, payment_period, 
+                description, payment_method, status
+            ) 
+            VALUES (%s, %s, %s, %s, %s, 'pending')
+            RETURNING id
+        ''', (
+            payment.employee_id, payment.amount, payment.payment_period,
+            payment.description, payment.payment_method
+        ))
+        
+        payment_id = cursor.fetchone()[0]
+        conn.commit()
+        
+        # Return the created payment
+        cursor.execute('''
+            SELECT p.*, e.name as employee_name 
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.id = %s
+        ''', (payment_id,))
+        payment_data = cursor.fetchone()
+        
+        return dict(zip([col[0] for col in cursor.description], payment_data))
+    except Exception as e:
+        logger.error(f"Error creating payment request: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create payment request")
+    finally:
+        if conn:
+            conn.close()
 
+@app.post("/payments/approve", response_model=Payment)
+def approve_payment(approval: PaymentApproval):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get the payment
+        cursor.execute('''
+            SELECT p.*, e.name as employee_name 
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.id = %s
+        ''', (approval.payment_id,))
+        payment_data = cursor.fetchone()
+        
+        if not payment_data:
+            raise HTTPException(status_code=404, detail="Payment not found")
+            
+        if payment_data[7] != 'pending':  # status field
+            raise HTTPException(status_code=400, detail="Payment is not pending approval")
+        
+        # Update payment status
+        status = 'approved' if approval.approved else 'rejected'
+        cursor.execute('''
+            UPDATE payments 
+            SET status = %s, 
+                remarks = %s, 
+                approved_at = CURRENT_TIMESTAMP,
+                processed_by = 1  # In a real app, this would be the logged-in user's ID
+            WHERE id = %s
+            RETURNING *
+        ''', (status, approval.remarks, approval.payment_id))
+        
+        updated_payment = cursor.fetchone()
+        conn.commit()
+        
+        return dict(zip([col[0] for col in cursor.description], updated_payment))
+    except Exception as e:
+        logger.error(f"Error processing payment approval: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to process payment approval")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/payments/pending", response_model=List[Payment])
+def get_pending_payments():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT p.*, e.name as employee_name 
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.status = 'pending'
+            ORDER BY p.created_at DESC
+        ''')
+        
+        payments = cursor.fetchall()
+        return [dict(zip([col[0] for col in cursor.description], row)) for row in payments]
+    except Exception as e:
+        logger.error(f"Error fetching pending payments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch pending payments")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/payments/history", response_model=List[Payment])
+def get_payment_history(status: Optional[str] = None):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        query = '''
+            SELECT p.*, e.name as employee_name 
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+        '''
+        params = []
+        
+        if status:
+            query += ' WHERE p.status = %s'
+            params.append(status)
+            
+        query += ' ORDER BY p.created_at DESC'
+        
+        cursor.execute(query, params)
+        payments = cursor.fetchall()
+        return [dict(zip([col[0] for col in cursor.description], row)) for row in payments]
+    except Exception as e:
+        logger.error(f"Error fetching payment history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch payment history")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/payments/employee/{employee_id}", response_model=List[Payment])
+def get_employee_payments(employee_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT p.*, e.name as employee_name 
+            FROM payments p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.employee_id = %s
+            ORDER BY p.created_at DESC
+        ''', (employee_id,))
+        
+        payments = cursor.fetchall()
+        return [dict(zip([col[0] for col in cursor.description], row)) for row in payments]
+    except Exception as e:
+        logger.error(f"Error fetching employee payments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch employee payments")
+    finally:
+        if conn:
+            conn.close()
 
 # Run the application
 if __name__ == "__main__":
