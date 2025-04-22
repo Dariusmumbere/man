@@ -590,14 +590,6 @@ def init_db():
                 processed_by INTEGER REFERENCES employees(id)
             )
         ''')
-
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)
-        ''')
-
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_payments_employee ON payments(employee_id)
-        ''')
        
 
 
@@ -3406,9 +3398,21 @@ def request_payment(payment: PaymentRequest):
         payment_id = cursor.fetchone()[0]
         conn.commit()
         
-        # Return the created payment
+        # Return the created payment with all required fields
         cursor.execute('''
-            SELECT p.*, e.name as employee_name 
+            SELECT 
+                p.id, 
+                p.employee_id, 
+                e.name as employee_name,
+                p.amount, 
+                p.payment_period, 
+                p.description,
+                p.payment_method,
+                p.status, 
+                p.remarks,
+                p.created_at, 
+                p.approved_at,
+                p.processed_by
             FROM payments p
             JOIN employees e ON p.employee_id = e.id
             WHERE p.id = %s
@@ -3424,7 +3428,6 @@ def request_payment(payment: PaymentRequest):
     finally:
         if conn:
             conn.close()
-
 @app.post("/payments/approve", response_model=Payment)
 def approve_payment(approval: PaymentApproval):
     conn = None
@@ -3480,7 +3483,19 @@ def get_pending_payments():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT p.*, e.name as employee_name 
+            SELECT 
+                p.id, 
+                p.employee_id, 
+                e.name as employee_name,
+                p.amount, 
+                p.payment_period, 
+                p.description,
+                p.payment_method,
+                p.status, 
+                p.remarks,
+                p.created_at, 
+                p.approved_at,
+                p.processed_by
             FROM payments p
             JOIN employees e ON p.employee_id = e.id
             WHERE p.status = 'pending'
@@ -3504,7 +3519,19 @@ def get_payment_history(status: Optional[str] = None):
         cursor = conn.cursor()
         
         query = '''
-            SELECT p.*, e.name as employee_name 
+            SELECT 
+                p.id, 
+                p.employee_id, 
+                e.name as employee_name,
+                p.amount, 
+                p.payment_period, 
+                p.description,
+                p.payment_method,
+                p.status, 
+                p.remarks,
+                p.created_at, 
+                p.approved_at,
+                p.processed_by
             FROM payments p
             JOIN employees e ON p.employee_id = e.id
         '''
@@ -3525,7 +3552,7 @@ def get_payment_history(status: Optional[str] = None):
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/payments/employee/{employee_id}", response_model=List[Payment])
 def get_employee_payments(employee_id: int):
     conn = None
