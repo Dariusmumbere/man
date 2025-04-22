@@ -314,7 +314,19 @@ class Payment(BaseModel):
     created_at: datetime
     approved_at: Optional[datetime]
     processed_by: Optional[int]
+    
+class ReportCreate(BaseModel):
+    activity_id: int
+    title: str
+    content: str
 
+class Report(ReportCreate):
+    id: int
+    created_at: datetime
+    status: str = "draft"  # "draft", "submitted", "approved"
+    submitted_by: Optional[int] = None
+    approved_by: Optional[int] = None
+    
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -588,6 +600,29 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 approved_at TIMESTAMP,
                 processed_by INTEGER REFERENCES employees(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reports (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER REFERENCES activities(id),
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                submitted_by INTEGER REFERENCES employees(id),
+                approved_by INTEGER REFERENCES employees(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS report_attachments (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER REFERENCES reports(id) ON DELETE CASCADE,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
        
@@ -3576,7 +3611,103 @@ def get_employee_payments(employee_id: int):
     finally:
         if conn:
             conn.close()
+@app.post("/reports/")
+async def create_report(
+    activity_id: int = Form(...),
+    title: str = Form(...),
+    content: str = Form(...),
+    attachments: List[UploadFile] = File([])
+):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify activity exists
+        cursor.execute('SELECT id FROM activities WHERE id = %s', (activity_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Activity not found")
+        
+        # Save report to database
+        cursor.execute('''
+            INSERT INTO reports (activity_id, title, content, status)
+            VALUES (%s, %s, %s, 'submitted')
+            RETURNING id, activity_id, title, content, status, created_at
+        ''', (activity_id, title, content))
+        
+        report = cursor.fetchone()
+        
+        # Handle file attachments
+        if attachments:
+            upload_dir = Path("uploads/reports")
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            
+            for file in attachments:
+                file_id = str(uuid.uuid4())
+                file_ext = Path(file.filename).suffix
+                file_path = upload_dir / f"{file_id}{file_ext}"
+                
+                with open(file_path, "wb") as buffer:
+                    buffer.write(await file.read())
+                
+                cursor.execute('''
+                    INSERT INTO report_attachments (report_id, original_filename, stored_filename, file_type)
+                    VALUES (%s, %s, %s, %s)
+                ''', (report[0], file.filename, str(file_path), file.content_type))
+        
+        conn.commit()
+        
+        return {
+            "id": report[0],
+            "activity_id": report[1],
+            "title": report[2],
+            "content": report[3],
+            "status": report[4],
+            "created_at": report[5]
+        }
+    except Exception as e:
+        logger.error(f"Error creating report: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create report")
+    finally:
+        if conn:
+            conn.close()
 
+@app.get("/reports/")
+def get_reports():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT r.id, r.activity_id, a.name as activity_name, 
+                   r.title, r.content, r.status, r.created_at
+            FROM reports r
+            JOIN activities a ON r.activity_id = a.id
+            ORDER BY r.created_at DESC
+        ''')
+        
+        reports = []
+        for row in cursor.fetchall():
+            reports.append({
+                "id": row[0],
+                "activity_id": row[1],
+                "activity_name": row[2],
+                "title": row[3],
+                "content": row[4],
+                "status": row[5],
+                "created_at": row[6]
+            })
+            
+        return {"reports": reports}
+    except Exception as e:
+        logger.error(f"Error fetching reports: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch reports")
+    finally:
+        if conn:
+            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
