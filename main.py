@@ -3044,6 +3044,7 @@ def delete_budget_item(item_id: int):
     finally:
         if conn:
             conn.close()
+            
 @app.post("/employees/", response_model=Employee)
 def create_employee(employee: EmployeeCreate):
     conn = None
@@ -3051,7 +3052,6 @@ def create_employee(employee: EmployeeCreate):
         conn = get_db()
         cursor = conn.cursor()
         
-        # Validate date format
         try:
             dob = datetime.strptime(employee.dob, "%Y-%m-%d").date()
         except ValueError:
@@ -3106,7 +3106,7 @@ def create_employee(employee: EmployeeCreate):
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/employees/", response_model=List[Employee])
 def get_employees():
     conn = None
