@@ -316,6 +316,7 @@ class Payment(BaseModel):
     processed_by: Optional[int]
     
 class ReportCreate(BaseModel):
+    employee_id: int
     activity_id: int
     title: str
     content: str
@@ -323,7 +324,7 @@ class ReportCreate(BaseModel):
 class Report(ReportCreate):
     id: int
     created_at: datetime
-    status: str = "draft"  # "draft", "submitted", "approved"
+    status: str = "submitted"
     submitted_by: Optional[int] = None
     approved_by: Optional[int] = None
     
@@ -602,13 +603,26 @@ def init_db():
                 processed_by INTEGER REFERENCES employees(id)
             )
         ''')
+      
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS report_attachments (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER REFERENCES reports(id) ON DELETE CASCADE,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS reports (
                 id SERIAL PRIMARY KEY,
+                employee_id INTEGER REFERENCES employees(id),
                 activity_id INTEGER REFERENCES activities(id),
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'draft',
+                status TEXT NOT NULL DEFAULT 'submitted',
                 submitted_by INTEGER REFERENCES employees(id),
                 approved_by INTEGER REFERENCES employees(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -3611,8 +3625,10 @@ def get_employee_payments(employee_id: int):
     finally:
         if conn:
             conn.close()
+            
 @app.post("/reports/")
-async def create_report(
+def create_report(
+    employee_id: int = Form(...),
     activity_id: int = Form(...),
     title: str = Form(...),
     content: str = Form(...),
@@ -3623,6 +3639,11 @@ async def create_report(
         conn = get_db()
         cursor = conn.cursor()
         
+        # Verify employee exists
+        cursor.execute('SELECT id FROM employees WHERE id = %s', (employee_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
         # Verify activity exists
         cursor.execute('SELECT id FROM activities WHERE id = %s', (activity_id,))
         if not cursor.fetchone():
@@ -3630,16 +3651,16 @@ async def create_report(
         
         # Save report to database
         cursor.execute('''
-            INSERT INTO reports (activity_id, title, content, status)
-            VALUES (%s, %s, %s, 'submitted')
+            INSERT INTO reports (employee_id, activity_id, title, content, status, submitted_by)
+            VALUES (%s, %s, %s, %s, 'submitted', %s)
             RETURNING id, activity_id, title, content, status, created_at
-        ''', (activity_id, title, content))
+        ''', (employee_id, activity_id, title, content, employee_id))
         
         report = cursor.fetchone()
         
         # Handle file attachments
         if attachments:
-            upload_dir = Path("uploads/reports")
+            upload_dir = Path(UPLOAD_DIR)
             upload_dir.mkdir(parents=True, exist_ok=True)
             
             for file in attachments:
@@ -3648,7 +3669,7 @@ async def create_report(
                 file_path = upload_dir / f"{file_id}{file_ext}"
                 
                 with open(file_path, "wb") as buffer:
-                    buffer.write(await file.read())
+                    shutil.copyfileobj(file.file, buffer)
                 
                 cursor.execute('''
                     INSERT INTO report_attachments (report_id, original_filename, stored_filename, file_type)
@@ -3659,6 +3680,7 @@ async def create_report(
         
         return {
             "id": report[0],
+            "employee_id": employee_id,
             "activity_id": report[1],
             "title": report[2],
             "content": report[3],
@@ -3682,10 +3704,12 @@ def get_reports():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT r.id, r.activity_id, a.name as activity_name, 
-                   r.title, r.content, r.status, r.created_at
+            SELECT r.id, r.employee_id, r.activity_id, a.name as activity_name, 
+                   r.title, r.content, r.status, r.submitted_by, r.created_at,
+                   e.name as employee_name
             FROM reports r
             JOIN activities a ON r.activity_id = a.id
+            LEFT JOIN employees e ON r.submitted_by = e.id
             ORDER BY r.created_at DESC
         ''')
         
@@ -3693,12 +3717,15 @@ def get_reports():
         for row in cursor.fetchall():
             reports.append({
                 "id": row[0],
-                "activity_id": row[1],
-                "activity_name": row[2],
-                "title": row[3],
-                "content": row[4],
-                "status": row[5],
-                "created_at": row[6]
+                "employee_id": row[1],
+                "activity_id": row[2],
+                "activity_name": row[3],
+                "title": row[4],
+                "content": row[5],
+                "status": row[6],
+                "submitted_by": row[7],
+                "submitted_by_name": row[9],
+                "created_at": row[8]
             })
             
         return {"reports": reports}
@@ -3708,6 +3735,7 @@ def get_reports():
     finally:
         if conn:
             conn.close()
+
 # Run the application
 if __name__ == "__main__":
     import uvicorn
