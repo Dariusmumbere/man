@@ -708,6 +708,7 @@ def init_db():
 
 # Initialize database
 init_db()
+migrate_database()
             
 # Product endpoints
 @app.post("/products/")
@@ -3698,10 +3699,10 @@ def create_report(
         cursor.execute('''
             INSERT INTO reports (employee_id, activity_id, title, content, status, submitted_by)
             VALUES (%s, %s, %s, %s, 'submitted', %s)
-            RETURNING id, activity_id, title, content, status, created_at
+            RETURNING id
         ''', (employee_id, activity_id, title, content, employee_id))
         
-        report = cursor.fetchone()
+        report_id = cursor.fetchone()[0]
         
         # Handle file attachments
         if attachments:
@@ -3719,18 +3720,17 @@ def create_report(
                 cursor.execute('''
                     INSERT INTO report_attachments (report_id, original_filename, stored_filename, file_type)
                     VALUES (%s, %s, %s, %s)
-                ''', (report[0], file.filename, str(file_path), file.content_type))
+                ''', (report_id, file.filename, str(file_path), file.content_type))
         
         conn.commit()
         
         return {
-            "id": report[0],
+            "id": report_id,
             "employee_id": employee_id,
-            "activity_id": report[1],
-            "title": report[2],
-            "content": report[3],
-            "status": report[4],
-            "created_at": report[5]
+            "activity_id": activity_id,
+            "title": title,
+            "content": content,
+            "status": "submitted"
         }
     except Exception as e:
         logger.error(f"Error creating report: {e}")
@@ -3748,13 +3748,18 @@ def get_reports():
         conn = get_db()
         cursor = conn.cursor()
         
+        # Updated query to handle potential schema differences
         cursor.execute('''
-            SELECT r.id, r.employee_id, r.activity_id, a.name as activity_name, 
-                   r.title, r.content, r.status, r.submitted_by, r.created_at,
-                   e.name as employee_name
+            SELECT r.id, r.title, r.content, r.status, r.created_at,
+                   a.id as activity_id, a.name as activity_name,
+                   COALESCE(r.employee_id, 0) as employee_id,
+                   COALESCE(e.name, 'Unknown') as employee_name,
+                   COALESCE(r.submitted_by, 0) as submitted_by,
+                   COALESCE(submitter.name, 'Unknown') as submitted_by_name
             FROM reports r
-            JOIN activities a ON r.activity_id = a.id
-            LEFT JOIN employees e ON r.submitted_by = e.id
+            LEFT JOIN activities a ON r.activity_id = a.id
+            LEFT JOIN employees e ON r.employee_id = e.id
+            LEFT JOIN employees submitter ON r.submitted_by = submitter.id
             ORDER BY r.created_at DESC
         ''')
         
@@ -3762,15 +3767,16 @@ def get_reports():
         for row in cursor.fetchall():
             reports.append({
                 "id": row[0],
-                "employee_id": row[1],
-                "activity_id": row[2],
-                "activity_name": row[3],
-                "title": row[4],
-                "content": row[5],
-                "status": row[6],
-                "submitted_by": row[7],
-                "submitted_by_name": row[8] if row[8] else "Unknown",
-                "created_at": row[8]
+                "title": row[1],
+                "content": row[2],
+                "status": row[3],
+                "created_at": row[4],
+                "activity_id": row[5],
+                "activity_name": row[6],
+                "employee_id": row[7],
+                "employee_name": row[8],
+                "submitted_by": row[9],
+                "submitted_by_name": row[10]
             })
             
         return {"reports": reports}
@@ -3780,7 +3786,6 @@ def get_reports():
     finally:
         if conn:
             conn.close()
-
 # Run the application
 if __name__ == "__main__":
     import uvicorn
