@@ -3786,6 +3786,235 @@ def get_reports():
     finally:
         if conn:
             conn.close()
+
+@app.get("/reports/export")
+def export_reports(
+    status: str = None,
+    activity_id: int = None,
+    search: str = None,
+    start_date: str = None,
+    end_date: str = None
+):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        query = """
+            SELECT r.id, r.title, a.name as activity, e.name as employee,
+                   r.status, r.created_at, r.director_comments
+            FROM reports r
+            JOIN activities a ON r.activity_id = a.id
+            JOIN employees e ON r.employee_id = e.id
+        """
+        
+        conditions = []
+        params = []
+        
+        if status:
+            conditions.append("r.status = %s")
+            params.append(status)
+            
+        if activity_id:
+            conditions.append("r.activity_id = %s")
+            params.append(activity_id)
+            
+        if search:
+            conditions.append("(r.title ILIKE %s OR r.content ILIKE %s)")
+            params.extend([f"%{search}%", f"%{search}%"])
+            
+        if start_date and end_date:
+            conditions.append("r.created_at BETWEEN %s AND %s")
+            params.extend([start_date, end_date])
+            
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+            
+        query += " ORDER BY r.created_at DESC"
+        
+        cursor.execute(query, params)
+        reports = cursor.fetchall()
+        
+        # Generate CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow([
+            "ID", "Title", "Activity", "Employee", 
+            "Status", "Created At", "Director Comments"
+        ])
+        
+        # Write data
+        for report in reports:
+            writer.writerow([
+                report[0], report[1], report[2], report[3],
+                report[4], report[5], report[6] or ""
+            ])
+        
+        # Return CSV file
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=reports_export_{datetime.now().date()}.csv"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting reports: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export reports")
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/reports/{report_id}/status")
+def update_report_status(report_id: int, status_update: dict):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify report exists
+        cursor.execute("SELECT id FROM reports WHERE id = %s", (report_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Report not found")
+            
+        # Update status
+        cursor.execute("""
+            UPDATE reports 
+            SET status = %s, 
+                approved_by = %s,
+                approved_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING id
+        """, (status_update['status'], status_update.get('director_id'), report_id))
+        
+        # Update comments if provided
+        if status_update.get('comments'):
+            cursor.execute("""
+                UPDATE reports
+                SET director_comments = %s
+                WHERE id = %s
+            """, (status_update['comments'], report_id))
+            
+        conn.commit()
+        return {"message": "Report status updated successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error updating report status: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update report status")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/director/reports/")
+def get_director_reports(
+    status: str = "submitted",
+    page: int = 1,
+    per_page: int = 10,
+    activity_id: int = None,
+    search: str = None,
+    start_date: str = None,
+    end_date: str = None
+):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Base query
+        query = """
+            SELECT r.id, r.title, r.content, r.status, r.created_at,
+                   a.id as activity_id, a.name as activity_name,
+                   e.id as employee_id, e.name as employee_name,
+                   r.submitted_by, submitter.name as submitted_by_name,
+                   COUNT(ra.id) as attachments_count
+            FROM reports r
+            JOIN activities a ON r.activity_id = a.id
+            JOIN employees e ON r.employee_id = e.id
+            LEFT JOIN employees submitter ON r.submitted_by = submitter.id
+            LEFT JOIN report_attachments ra ON r.id = ra.report_id
+        """
+        
+        # Where conditions
+        conditions = []
+        params = []
+        
+        if status != "all":
+            conditions.append("r.status = %s")
+            params.append(status)
+            
+        if activity_id:
+            conditions.append("r.activity_id = %s")
+            params.append(activity_id)
+            
+        if search:
+            conditions.append("(r.title ILIKE %s OR r.content ILIKE %s)")
+            params.extend([f"%{search}%", f"%{search}%"])
+            
+        if start_date and end_date:
+            conditions.append("r.created_at BETWEEN %s AND %s")
+            params.extend([start_date, end_date])
+            
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+            
+        # Group by and pagination
+        query += """
+            GROUP BY r.id, a.id, e.id, submitter.id
+            ORDER BY r.created_at DESC
+            LIMIT %s OFFSET %s
+        """
+        params.extend([per_page, (page - 1) * per_page])
+        
+        cursor.execute(query, params)
+        reports = cursor.fetchall()
+        
+        # Get total count for pagination
+        count_query = "SELECT COUNT(*) FROM reports r"
+        if conditions:
+            count_query += " WHERE " + " AND ".join(conditions)
+            
+        cursor.execute(count_query, params[:-2])  # Exclude LIMIT params
+        total_reports = cursor.fetchone()[0]
+        
+        # Format results
+        result = []
+        for row in reports:
+            report = {
+                "id": row[0],
+                "title": row[1],
+                "content": row[2],
+                "status": row[3],
+                "created_at": row[4],
+                "activity_id": row[5],
+                "activity_name": row[6],
+                "employee_id": row[7],
+                "employee_name": row[8],
+                "submitted_by": row[9],
+                "submitted_by_name": row[10],
+                "attachments_count": row[11]
+            }
+            result.append(report)
+            
+        return {
+            "reports": result,
+            "total": total_reports,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": (total_reports + per_page - 1) // per_page
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching director reports: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch reports")
+    finally:
+        if conn:
+            conn.close()
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
