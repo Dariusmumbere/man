@@ -332,6 +332,51 @@ class Report(ReportCreate):
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
+def migrate_database():
+    """Handle database schema migrations"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if employee_id column exists in reports table
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='reports' AND column_name='employee_id'
+        """)
+        if not cursor.fetchone():
+            # Add the employee_id column if it doesn't exist
+            cursor.execute("""
+                ALTER TABLE reports 
+                ADD COLUMN employee_id INTEGER REFERENCES employees(id)
+            """)
+            logger.info("Added employee_id column to reports table")
+        
+        # Check if submitted_by column exists in reports table
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='reports' AND column_name='submitted_by'
+        """)
+        if not cursor.fetchone():
+            # Add the submitted_by column if it doesn't exist
+            cursor.execute("""
+                ALTER TABLE reports 
+                ADD COLUMN submitted_by INTEGER REFERENCES employees(id)
+            """)
+            logger.info("Added submitted_by column to reports table")
+        
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error migrating database: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
 # Initialize database tables
 def init_db():
     conn = None
@@ -3724,7 +3769,7 @@ def get_reports():
                 "content": row[5],
                 "status": row[6],
                 "submitted_by": row[7],
-                "submitted_by_name": row[9],
+                "submitted_by_name": row[8] if row[8] else "Unknown",
                 "created_at": row[8]
             })
             
