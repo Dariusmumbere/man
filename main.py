@@ -4014,6 +4014,32 @@ def get_director_reports(
     finally:
         if conn:
             conn.close()
+
+@app.delete("/reports/{report_id}")
+def delete_report(report_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First check if report exists
+        cursor.execute('SELECT id FROM reports WHERE id = %s', (report_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Report not found")
+        
+        # Delete the report (attachments will be deleted automatically due to ON DELETE CASCADE)
+        cursor.execute('DELETE FROM reports WHERE id = %s', (report_id,))
+        conn.commit()
+        
+        return {"message": "Report deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting report: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete report")
+    finally:
+        if conn:
+            conn.close()
             
 # Run the application
 if __name__ == "__main__":
