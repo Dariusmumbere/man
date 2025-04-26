@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import UploadFile, File, Form
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import os
 import psycopg2
 import logging
@@ -392,6 +392,7 @@ def init_db():
         cursor = conn.cursor()
         # Drop and recreate tables to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
+        cursor.execute('DROP TABLE IF EXITS employees')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
                 id SERIAL PRIMARY KEY,
