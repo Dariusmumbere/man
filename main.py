@@ -4040,6 +4040,58 @@ def delete_report(report_id: int):
     finally:
         if conn:
             conn.close()
+
+@app.post("/activities/{activity_id}/budget-items/", response_model=BudgetItem)
+def create_activity_budget_item(activity_id: int, budget_item: BudgetItemCreate):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify activity exists and get project_id
+        cursor.execute('SELECT project_id FROM activities WHERE id = %s', (activity_id,))
+        activity = cursor.fetchone()
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        project_id = activity[0]
+        
+        # Create the budget item linked to the project
+        cursor.execute('''
+            INSERT INTO budget_items (project_id, item_name, description, quantity, unit_price, category)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, project_id, item_name, description, quantity, unit_price, total, category, created_at
+        ''', (
+            project_id,
+            budget_item.item_name,
+            budget_item.description,
+            budget_item.quantity,
+            budget_item.unit_price,
+            budget_item.category
+        ))
+        
+        new_item = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "id": new_item[0],
+            "project_id": new_item[1],
+            "item_name": new_item[2],
+            "description": new_item[3],
+            "quantity": new_item[4],
+            "unit_price": new_item[5],
+            "total": new_item[6],
+            "category": new_item[7],
+            "created_at": new_item[8]
+        }
+    except Exception as e:
+        logger.error(f"Error creating activity budget item: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
             
 # Run the application
 if __name__ == "__main__":
