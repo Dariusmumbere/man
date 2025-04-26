@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import UploadFile, File, Form
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
 import psycopg2
 import logging
@@ -329,10 +329,10 @@ class Report(ReportCreate):
     approved_by: Optional[int] = None
 
 class BudgetItemCreate(BaseModel):
-    item_name: str
-    description: Optional[str] = None
-    quantity: float = Field(..., gt=0)  # Must be greater than 0
-    unit_price: float = Field(..., gt=0)  # Must be greater than 0
+    item_name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    quantity: float = Field(..., gt=0, description="Must be greater than 0")
+    unit_price: float = Field(..., gt=0, description="Must be greater than 0")
     category: str = Field(..., regex="^(materials|labor|transport|equipment|other)$")
     
 # File storage setup
