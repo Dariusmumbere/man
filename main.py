@@ -327,6 +327,13 @@ class Report(ReportCreate):
     status: str = "submitted"
     submitted_by: Optional[int] = None
     approved_by: Optional[int] = None
+
+class BudgetItemCreate(BaseModel):
+    item_name: str
+    description: Optional[str] = None
+    quantity: float = Field(..., gt=0)  # Must be greater than 0
+    unit_price: float = Field(..., gt=0)  # Must be greater than 0
+    category: str = Field(..., regex="^(materials|labor|transport|equipment|other)$")
     
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
