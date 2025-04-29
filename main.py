@@ -173,9 +173,14 @@ class DonationCreate(BaseModel):
     donor_name: str
     amount: float
     payment_method: str
-    date: str
+    date: date
     project: Optional[str] = None
     notes: Optional[str] = None
+
+class Donation(DonationCreate):
+    id: int
+    status: str
+    created_at: datetime
 
 class ProjectCreate(BaseModel):
     name: str
@@ -334,6 +339,18 @@ class BudgetItemCreate(BaseModel):
     quantity: float
     unit_price: float 
     category: str 
+    
+class ProgramArea(BaseModel):
+    id: int
+    name: str
+    budget: float
+    balance: float
+
+class BankAccount(BaseModel):
+    id: int
+    name: str
+    account_number: str
+    balance: float
     
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -538,12 +555,12 @@ def init_db():
             CREATE TABLE IF NOT EXISTS donations (
                 id SERIAL PRIMARY KEY,
                 donor_name TEXT NOT NULL,
-                amount REAL NOT NULL,
+                amount FLOAT NOT NULL,
                 payment_method TEXT NOT NULL,
                 date DATE NOT NULL,
                 project TEXT,
                 notes TEXT,
-                status TEXT DEFAULT 'pending',
+                status TEXT DEFAULT 'completed',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -691,6 +708,43 @@ def init_db():
                 file_type TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS program_areas (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                budget FLOAT DEFAULT 0,
+                balance FLOAT DEFAULT 0
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bank_accounts (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                account_number TEXT NOT NULL,
+                balance FLOAT DEFAULT 0
+            )
+        ''')
+        program_areas = [
+            ("Main Account", 0),
+            ("Women Empowerment", 0),
+            ("Vocational Education", 0),
+            ("Climate Change", 0),
+            ("Reproductive Health", 0)
+        ]
+        
+        for name, budget in program_areas:
+            cursor.execute('''
+                INSERT INTO program_areas (name, budget)
+                VALUES (%s, %s)
+                ON CONFLICT (name) DO NOTHING
+            ''', (name, budget))
+        
+        # Insert main bank account if it doesn't exist
+        cursor.execute('''
+            INSERT INTO bank_accounts (name, account_number, balance)
+            VALUES ('Main Account', '****5580', 0)
+            ON CONFLICT (name) DO NOTHING
         ''')
        
 
@@ -2143,7 +2197,7 @@ def create_donation(donation: DonationCreate):
         conn = get_db()
         cursor = conn.cursor()
         
-        # Insert into donations table
+        # Insert donation
         cursor.execute('''
             INSERT INTO donations (donor_name, amount, payment_method, date, project, notes)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -2159,23 +2213,20 @@ def create_donation(donation: DonationCreate):
         
         new_donation = cursor.fetchone()
         
-        # Also record as a transaction
-        cursor.execute('''
-            INSERT INTO transactions (date, type, amount, purpose)
-            VALUES (%s, %s, %s, %s)
-        ''', (
-            donation.date,
-            "deposit",
-            donation.amount,
-            f"Donation from {donation.donor_name} via {donation.payment_method}"
-        ))
+        # Update the appropriate program area balance
+        if donation.project:
+            cursor.execute('''
+                UPDATE program_areas
+                SET balance = balance + %s
+                WHERE name = %s
+            ''', (donation.amount, donation.project))
         
-        # Create notification
-        notification_message = f"New donation from {donation.donor_name} via {donation.payment_method}"
+        # Update main account balance
         cursor.execute('''
-            INSERT INTO notifications (message, type)
-            VALUES (%s, %s)
-        ''', (notification_message, "donation"))
+            UPDATE bank_accounts
+            SET balance = balance + %s
+            WHERE name = 'Main Account'
+        ''', (donation.amount,))
         
         conn.commit()
         
@@ -2219,17 +2270,108 @@ def get_donations():
                 "donor_name": row[1],
                 "amount": row[2],
                 "payment_method": row[3],
-                "date": row[4].strftime("%Y-%m-%d") if isinstance(row[4], date) else row[4],
+                "date": row[4],
                 "project": row[5],
                 "notes": row[6],
                 "status": row[7],
-                "created_at": row[8].strftime("%Y-%m-%d %H:%M:%S") if isinstance(row[8], datetime) else row[8]
+                "created_at": row[8]
             })
             
         return donations
     except Exception as e:
         logger.error(f"Error fetching donations: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch donations")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/program-areas/", response_model=List[ProgramArea])
+def get_program_areas():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, budget, balance
+            FROM program_areas
+            ORDER BY name
+        ''')
+        
+        program_areas = []
+        for row in cursor.fetchall():
+            program_areas.append({
+                "id": row[0],
+                "name": row[1],
+                "budget": row[2],
+                "balance": row[3]
+            })
+            
+        return program_areas
+    except Exception as e:
+        logger.error(f"Error fetching program areas: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch program areas")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/bank-accounts/", response_model=List[BankAccount])
+def get_bank_accounts():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, account_number, balance
+            FROM bank_accounts
+            ORDER BY name
+        ''')
+        
+        accounts = []
+        for row in cursor.fetchall():
+            accounts.append({
+                "id": row[0],
+                "name": row[1],
+                "account_number": row[2],
+                "balance": row[3]
+            })
+            
+        return accounts
+    except Exception as e:
+        logger.error(f"Error fetching bank accounts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch bank accounts")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/dashboard-summary/")
+def get_dashboard_summary():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get total donations
+        cursor.execute('SELECT COALESCE(SUM(amount), 0) FROM donations')
+        total_donations = cursor.fetchone()[0]
+        
+        # Get program area balances
+        cursor.execute('SELECT name, balance FROM program_areas')
+        program_balances = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        # Get main account balance
+        cursor.execute('SELECT balance FROM bank_accounts WHERE name = %s', ('Main Account',))
+        main_balance = cursor.fetchone()[0]
+        
+        return {
+            "total_donations": total_donations,
+            "program_balances": program_balances,
+            "main_account_balance": main_balance
+        }
+    except Exception as e:
+        logger.error(f"Error fetching dashboard summary: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch dashboard summary")
     finally:
         if conn:
             conn.close()
