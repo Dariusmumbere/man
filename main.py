@@ -717,14 +717,16 @@ def init_db():
                 balance FLOAT DEFAULT 0
             )
         ''')
+        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bank_accounts (
                 id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
+                name TEXT NOT NULL UNIQUE,
                 account_number TEXT NOT NULL,
                 balance FLOAT DEFAULT 0
             )
         ''')
+        
         program_areas = [
             ("Main Account", 0),
             ("Women Empowerment", 0),
