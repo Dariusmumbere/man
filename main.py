@@ -4244,7 +4244,50 @@ def create_activity_budget_item(activity_id: int, budget_item: BudgetItemCreate)
     finally:
         if conn:
             conn.close()
+@app.get("/activities/{activity_id}/budget-items/", response_model=List[BudgetItem])
+def get_activity_budget_items(activity_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # First get the project_id from the activity
+        cursor.execute('SELECT project_id FROM activities WHERE id = %s', (activity_id,))
+        activity = cursor.fetchone()
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
             
+        project_id = activity[0]
+        
+        # Now get all budget items for this project
+        cursor.execute('''
+            SELECT id, project_id, item_name, description, quantity, unit_price, total, category, created_at
+            FROM budget_items
+            WHERE project_id = %s
+            ORDER BY created_at DESC
+        ''', (project_id,))
+        
+        items = []
+        for row in cursor.fetchall():
+            items.append({
+                "id": row[0],
+                "project_id": row[1],
+                "item_name": row[2],
+                "description": row[3],
+                "quantity": row[4],
+                "unit_price": row[5],
+                "total": row[6],
+                "category": row[7],
+                "created_at": row[8].strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+        return items
+    except Exception as e:
+        logger.error(f"Error fetching activity budget items: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch budget items")
+    finally:
+        if conn:
+            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
