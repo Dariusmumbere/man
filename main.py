@@ -355,13 +355,13 @@ class BankAccount(BaseModel):
     account_number: str
     balance: float
     
- class User(BaseModel):
-     username: str
-     password: str
-     role: str
-     full_name: Optional[str] = None
-     email: Optional[str] = None
-     is_active: bool = True
+class User(BaseModel):
+    username: str
+    password: str
+    role: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    is_active: bool = True
 
 class UserLogin(BaseModel):
     username: str
