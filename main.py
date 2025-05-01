@@ -15,6 +15,9 @@ import uuid
 import shutil
 from typing import List
 from pathlib import Path
+from passlib.context import CryptContext
+import secrets
+import string
 
 app = FastAPI()
 
@@ -351,7 +354,25 @@ class BankAccount(BaseModel):
     name: str
     account_number: str
     balance: float
-    
+ class User(BaseModel):
+    username: str
+    password: str
+    role: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    is_active: bool = True
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class Message(BaseModel):
+    sender_id: int
+    recipient_id: int
+    content: str
+    timestamp: Optional[datetime] = None
+    is_read: bool = False
+   
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -727,6 +748,31 @@ def init_db():
                 name TEXT NOT NULL UNIQUE,
                 account_number TEXT NOT NULL,
                 balance FLOAT DEFAULT 0
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                full_name TEXT,
+                email TEXT,
+                is_active BOOLEAN DEFAULT TRUE,
+                auth_token TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                sender_id INTEGER REFERENCES users(id) NOT NULL,
+                recipient_id INTEGER REFERENCES users(id) NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_read BOOLEAN DEFAULT FALSE
             )
         ''')
         
@@ -4292,7 +4338,229 @@ def get_activity_budget_items(activity_id: int):
     finally:
         if conn:
             conn.close()
-            
+@app.post("/api/users/register", response_model=dict)
+def register_user(user: User):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if username exists
+        cursor.execute("SELECT id FROM users WHERE username = %s", (user.username,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        # Hash password
+        hashed_password = pwd_context.hash(user.password)
+        
+        # Create user
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, role, full_name, email, is_active) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user.username, hashed_password, user.role, user.full_name, user.email, user.is_active)
+        )
+        user_id = cursor.fetchone()[0]
+        conn.commit()
+        
+        return {"message": "User registered successfully", "user_id": user_id}
+    except Exception as e:
+        logger.error(f"Error registering user: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to register user")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/api/users/login", response_model=dict)
+def login_user(credentials: UserLogin):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get user
+        cursor.execute(
+            "SELECT id, password_hash, is_active FROM users WHERE username = %s",
+            (credentials.username,)
+        )
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        user_id, password_hash, is_active = user
+        
+        if not is_active:
+            raise HTTPException(status_code=403, detail="Account is disabled")
+        
+        if not pwd_context.verify(credentials.password, password_hash):
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        # Generate token (simple implementation - consider JWT for production)
+        token = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        
+        # Store token (in production, use a proper session management system)
+        cursor.execute(
+            "UPDATE users SET auth_token = %s WHERE id = %s",
+            (token, user_id)
+        )
+        conn.commit()
+        
+        return {
+            "message": "Login successful",
+            "token": token,
+            "user_id": user_id,
+            "username": credentials.username
+        }
+    except Exception as e:
+        logger.error(f"Error logging in user: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to login")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/api/messages/send", response_model=dict)
+def send_message(message: Message, token: str = Header(...)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify token
+        cursor.execute(
+            "SELECT id FROM users WHERE auth_token = %s AND is_active = TRUE",
+            (token,)
+        )
+        sender = cursor.fetchone()
+        
+        if not sender:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        sender_id = sender[0]
+        
+        # Verify recipient exists
+        cursor.execute(
+            "SELECT id FROM users WHERE id = %s AND is_active = TRUE",
+            (message.recipient_id,)
+        )
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Recipient not found")
+        
+        # Insert message
+        cursor.execute(
+            "INSERT INTO messages (sender_id, recipient_id, content, timestamp) "
+            "VALUES (%s, %s, %s, NOW())",
+            (sender_id, message.recipient_id, message.content)
+        )
+        conn.commit()
+        
+        return {"message": "Message sent successfully"}
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to send message")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/api/messages", response_model=List[dict])
+def get_messages(token: str = Header(...), limit: int = 20, offset: int = 0):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify token and get user ID
+        cursor.execute(
+            "SELECT id FROM users WHERE auth_token = %s AND is_active = TRUE",
+            (token,)
+        )
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        user_id = user[0]
+        
+        # Get messages
+        cursor.execute(
+            "SELECT m.id, m.sender_id, u.username as sender_name, m.recipient_id, "
+            "m.content, m.timestamp, m.is_read "
+            "FROM messages m JOIN users u ON m.sender_id = u.id "
+            "WHERE m.recipient_id = %s "
+            "ORDER BY m.timestamp DESC "
+            "LIMIT %s OFFSET %s",
+            (user_id, limit, offset)
+        )
+        
+        messages = []
+        for msg in cursor.fetchall():
+            messages.append({
+                "id": msg[0],
+                "sender_id": msg[1],
+                "sender_name": msg[2],
+                "recipient_id": msg[3],
+                "content": msg[4],
+                "timestamp": msg[5],
+                "is_read": msg[6]
+            })
+        
+        # Mark messages as read
+        cursor.execute(
+            "UPDATE messages SET is_read = TRUE "
+            "WHERE recipient_id = %s AND is_read = FALSE",
+            (user_id,)
+        )
+        conn.commit()
+        
+        return messages
+    except Exception as e:
+        logger.error(f"Error fetching messages: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch messages")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/api/users", response_model=List[dict])
+def get_users(token: str = Header(...)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Verify token
+        cursor.execute(
+            "SELECT id FROM users WHERE auth_token = %s AND is_active = TRUE",
+            (token,)
+        )
+        if not cursor.fetchone():
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        # Get all active users
+        cursor.execute(
+            "SELECT id, username, full_name, role FROM users WHERE is_active = TRUE"
+        )
+        
+        users = []
+        for user in cursor.fetchall():
+            users.append({
+                "id": user[0],
+                "username": user[1],
+                "full_name": user[2],
+                "role": user[3]
+            })
+        
+        return users
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch users")
+    finally:
+        if conn:
+            conn.close()            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
