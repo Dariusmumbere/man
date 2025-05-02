@@ -4575,8 +4575,35 @@ def get_password_hash(password: str):
 def generate_auth_token(length=32):
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-# User management endpoints
+    
+def get_current_user(token: str = Header(...)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT id, username, role, full_name FROM users WHERE auth_token = %s",
+            (token,)
+        )
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+        return {
+            "id": user[0],
+            "username": user[1],
+            "role": user[2],
+            "full_name": user[3]
+        }
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        raise HTTPException(status_code=500, detail="Token verification failed")
+    finally:
+        if conn:
+            conn.close()
+            
 @app.post("/users/register")
 def register_user(user: User, current_user: dict = Depends(get_current_user)):
     # Only allow director to create accounts
@@ -4658,34 +4685,6 @@ def login_user(user_login: UserLogin):
         if conn:
             conn.close()
 
-# Authentication dependency
-def get_current_user(token: str = Header(...)):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            "SELECT id, username, role, full_name FROM users WHERE auth_token = %s",
-            (token,)
-        )
-        user = cursor.fetchone()
-        
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid authentication token")
-            
-        return {
-            "id": user[0],
-            "username": user[1],
-            "role": user[2],
-            "full_name": user[3]
-        }
-    except Exception as e:
-        logger.error(f"Error verifying token: {e}")
-        raise HTTPException(status_code=500, detail="Token verification failed")
-    finally:
-        if conn:
-            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
