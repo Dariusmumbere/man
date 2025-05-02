@@ -373,6 +373,8 @@ class Message(BaseModel):
     content: str
     timestamp: Optional[datetime] = None
     is_read: bool = False
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
    
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -4563,7 +4565,127 @@ def get_users(token: str = Header(...)):
     finally:
         if conn:
             conn.close()  
+
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str):
+    return pwd_context.hash(password)
+
+def generate_auth_token(length=32):
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+# User management endpoints
+@app.post("/users/register")
+def register_user(user: User, current_user: dict = Depends(get_current_user)):
+    # Only allow director to create accounts
+    if current_user["role"] != "director":
+        raise HTTPException(status_code=403, detail="Only director can create accounts")
+    
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if username already exists
+        cursor.execute("SELECT id FROM users WHERE username = %s", (user.username,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        # Hash password
+        hashed_password = get_password_hash(user.password)
+        auth_token = generate_auth_token()
+        
+        # Insert new user
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, role, full_name, email, auth_token) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user.username, hashed_password, user.role, user.full_name, user.email, auth_token)
+        )
+        user_id = cursor.fetchone()[0]
+        conn.commit()
+        
+        return {"message": "User created successfully", "user_id": user_id}
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create user")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/users/login")
+def login_user(user_login: UserLogin):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get user by username
+        cursor.execute(
+            "SELECT id, username, password_hash, role, full_name, auth_token FROM users WHERE username = %s",
+            (user_login.username,)
+        )
+        user = cursor.fetchone()
+        
+        if not user or not verify_password(user_login.password, user[2]):
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        # Generate new auth token
+        new_auth_token = generate_auth_token()
+        cursor.execute(
+            "UPDATE users SET auth_token = %s WHERE id = %s",
+            (new_auth_token, user[0])
+        )
+        conn.commit()
+        
+        return {
+            "access_token": new_auth_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user[0],
+                "username": user[1],
+                "role": user[3],
+                "full_name": user[4]
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error during login: {e}")
+        raise HTTPException(status_code=500, detail="Login failed")
+    finally:
+        if conn:
+            conn.close()
+
+# Authentication dependency
+def get_current_user(token: str = Header(...)):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT id, username, role, full_name FROM users WHERE auth_token = %s",
+            (token,)
+        )
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
             
+        return {
+            "id": user[0],
+            "username": user[1],
+            "role": user[2],
+            "full_name": user[3]
+        }
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        raise HTTPException(status_code=500, detail="Token verification failed")
+    finally:
+        if conn:
+            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
