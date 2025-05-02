@@ -378,6 +378,8 @@ class Message(BaseModel):
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 def migrate_database():
     """Handle database schema migrations"""
     conn = None
@@ -422,6 +424,7 @@ def migrate_database():
     finally:
         if conn:
             conn.close()
+
 
 # Initialize database tables
 def init_db():
@@ -4561,7 +4564,236 @@ def get_users(token: str = Header(...)):
         raise HTTPException(status_code=500, detail="Failed to fetch users")
     finally:
         if conn:
-            conn.close()            
+            conn.close()  
+
+def generate_random_password(length=12):
+    """Generate a random password"""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+@app.post("/users/", response_model=User)
+def create_user(user: User):
+    """Create a new user (only accessible by admin/director)"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if username already exists
+        cursor.execute("SELECT id FROM users WHERE username = %s", (user.username,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        # Generate a random password if not provided
+        password = user.password or generate_random_password()
+        hashed_password = pwd_context.hash(password)
+        
+        # Insert new user
+        cursor.execute("""
+            INSERT INTO users (username, password_hash, role, full_name, email, is_active)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, username, role, full_name, email, is_active, created_at
+        """, (
+            user.username,
+            hashed_password,
+            user.role,
+            user.full_name,
+            user.email,
+            user.is_active
+        ))
+        
+        new_user = cursor.fetchone()
+        conn.commit()
+        
+        # Convert to dict
+        user_dict = dict(zip(
+            ['id', 'username', 'role', 'full_name', 'email', 'is_active', 'created_at'],
+            new_user
+        ))
+        
+        # Include the plaintext password only for new accounts (for initial communication)
+        user_dict['initial_password'] = password
+        
+        return user_dict
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create user")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/users/", response_model=List[User])
+def get_users():
+    """Get list of all users (only accessible by admin/director)"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, username, role, full_name, email, is_active, created_at 
+            FROM users
+            ORDER BY created_at DESC
+        """)
+        
+        users = []
+        for row in cursor.fetchall():
+            users.append(dict(zip(
+                ['id', 'username', 'role', 'full_name', 'email', 'is_active', 'created_at'],
+                row
+            )))
+            
+        return users
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch users")
+    finally:
+        if conn:
+            conn.close()
+
+@app.put("/users/{user_id}", response_model=User)
+def update_user(user_id: int, user: User):
+    """Update a user (only accessible by admin/director)"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update user
+        update_fields = []
+        update_values = []
+        
+        if user.username:
+            update_fields.append("username = %s")
+            update_values.append(user.username)
+            
+        if user.password:
+            hashed_password = pwd_context.hash(user.password)
+            update_fields.append("password_hash = %s")
+            update_values.append(hashed_password)
+            
+        if user.role:
+            update_fields.append("role = %s")
+            update_values.append(user.role)
+            
+        if user.full_name is not None:
+            update_fields.append("full_name = %s")
+            update_values.append(user.full_name)
+            
+        if user.email is not None:
+            update_fields.append("email = %s")
+            update_values.append(user.email)
+            
+        if user.is_active is not None:
+            update_fields.append("is_active = %s")
+            update_values.append(user.is_active)
+            
+        if not update_fields:
+            raise HTTPException(status_code=400, detail="No fields to update")
+            
+        update_values.append(user_id)
+        
+        update_query = f"""
+            UPDATE users 
+            SET {', '.join(update_fields)}
+            WHERE id = %s
+            RETURNING id, username, role, full_name, email, is_active, created_at
+        """
+        
+        cursor.execute(update_query, update_values)
+        updated_user = cursor.fetchone()
+        conn.commit()
+        
+        return dict(zip(
+            ['id', 'username', 'role', 'full_name', 'email', 'is_active', 'created_at'],
+            updated_user
+        ))
+    except Exception as e:
+        logger.error(f"Error updating user: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update user")
+    finally:
+        if conn:
+            conn.close()
+
+@app.delete("/users/{user_id}")
+def delete_user(user_id: int):
+    """Delete a user (only accessible by admin/director)"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        # Delete user
+        cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+        
+        return {"message": "User deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete user")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/users/reset-password/{user_id}")
+def reset_user_password(user_id: int):
+    """Reset a user's password (only accessible by admin/director)"""
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        # Generate new password
+        new_password = generate_random_password()
+        hashed_password = pwd_context.hash(new_password)
+        
+        # Update password
+        cursor.execute("""
+            UPDATE users 
+            SET password_hash = %s 
+            WHERE id = %s
+            RETURNING username
+        """, (hashed_password, user_id))
+        
+        updated_user = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "message": "Password reset successfully",
+            "username": updated_user[0],
+            "new_password": new_password
+        }
+    except Exception as e:
+        logger.error(f"Error resetting password: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to reset password")
+    finally:
+        if conn:
+            conn.close()
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
