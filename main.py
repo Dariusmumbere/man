@@ -414,8 +414,6 @@ def init_db():
         # Drop and recreate tables to ensure the correct schema
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
         cursor.execute('DROP TABLE IF EXISTS donations')
-        cursor.execute('DROP TABLE IF EXISTS program_areas')
-        cursor.execute('DROP TABLE IF EXISTS bank_accounts')
        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
