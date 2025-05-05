@@ -411,8 +411,7 @@ def init_db():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('DROP TABLE IF EXISTS bank_accounts')
-        cursor.execute('DROP TABLE IF EXISTS donors')
+   
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
         
         cursor.execute('''
