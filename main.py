@@ -412,7 +412,7 @@ def init_db():
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('DROP TABLE IF EXISTS donors')
-        cursor.execute('DROP TABLE IF EXISTS donors')
+        cursor.execute('DROP TABLE IF EXISTS diary_entries')
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
