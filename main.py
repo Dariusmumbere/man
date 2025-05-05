@@ -558,7 +558,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donations (
                 id SERIAL PRIMARY KEY,
-                donor_id INTEGER REFERENCES donors(id) ON DELETE SET NULL,  # Changed from donor_name
+                donor_id INTEGER REFERENCES donors(id) ON DELETE SET NULL,  
                 amount FLOAT NOT NULL,
                 payment_method TEXT NOT NULL,
                 date DATE NOT NULL,
