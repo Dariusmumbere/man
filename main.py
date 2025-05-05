@@ -411,7 +411,8 @@ def init_db():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        # Drop and recreate tables to ensure the correct schema
+        cursor.execute('DROP TABLE IF EXISTS donors')
+        cursor.execute('DROP TABLE IF EXISTS donors')
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
