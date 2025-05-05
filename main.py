@@ -558,7 +558,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donations (
                 id SERIAL PRIMARY KEY,
-                donor_name TEXT NOT NULL,
+                donor_id INTEGER REFERENCES donors(id) ON DELETE SET NULL,  # Changed from donor_name
                 amount FLOAT NOT NULL,
                 payment_method TEXT NOT NULL,
                 date DATE NOT NULL,
@@ -567,7 +567,7 @@ def init_db():
                 status TEXT DEFAULT 'completed',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
+        ''') 
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
