@@ -354,7 +354,31 @@ class BankAccount(BaseModel):
     name: str
     account_number: str
     balance: float
-   
+    
+class SavingsGoal(BaseModel):
+    target_amount: float
+    target_date: str  # YYYY-MM-DD
+    current_amount: float = 0
+    monthly_savings: float = 0
+
+class SavingsTransaction(BaseModel):
+    amount: float
+    date: str  # YYYY-MM-DD
+    type: str  # "deposit" or "withdrawal"
+    description: str
+
+class AbstinenceTracker(BaseModel):
+    start_date: str  # YYYY-MM-DD
+    end_date: str  # YYYY-MM-DD
+    current_streak: int = 0
+    longest_streak: int = 0
+    total_days: int = 0
+    status: str = "active"  # "active" or "completed" 
+
+class AbstinenceCheckIn(BaseModel):
+    date: str  # YYYY-MM-DD
+    success: bool
+    notes: str = ""
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -754,6 +778,53 @@ def init_db():
             VALUES ('Main Account', '****5580', 0)
             ON CONFLICT (name) DO NOTHING
         ''')
+        
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS savings_goals (
+            id SERIAL PRIMARY KEY,
+            target_amount FLOAT NOT NULL,
+            target_date DATE NOT NULL,
+            current_amount FLOAT DEFAULT 0,
+            monthly_savings FLOAT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS savings_transactions (
+            id SERIAL PRIMARY KEY,
+            goal_id INTEGER REFERENCES savings_goals(id),
+            amount FLOAT NOT NULL,
+            date DATE NOT NULL,
+            type VARCHAR(20) NOT NULL,  -- 'deposit' or 'withdrawal'
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS abstinence_trackers (
+            id SERIAL PRIMARY KEY,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            current_streak INTEGER DEFAULT 0,
+            longest_streak INTEGER DEFAULT 0,
+            total_days INTEGER DEFAULT 0,
+            status VARCHAR(20) DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS abstinence_checkins (
+            id SERIAL PRIMARY KEY,
+            tracker_id INTEGER REFERENCES abstinence_trackers(id),
+            date DATE NOT NULL,
+            success BOOLEAN NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
        
 
 
@@ -4295,6 +4366,429 @@ def get_activity_budget_items(activity_id: int):
     finally:
         if conn:
             conn.close()
+ 
+@app.post("/savings/goal/", response_model=SavingsGoal)
+def create_savings_goal(goal: SavingsGoal):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Calculate monthly savings needed if not provided
+        if goal.monthly_savings == 0:
+            start_date = datetime.strptime(goal.target_date, "%Y-%m-%d").date()
+            months = (start_date.year - datetime.now().date().year) * 12 + start_date.month - datetime.now().date().month
+            if months <= 0:
+                raise HTTPException(status_code=400, detail="Target date must be in the future")
+            goal.monthly_savings = (goal.target_amount - goal.current_amount) / months
+        
+        cursor.execute('''
+            INSERT INTO savings_goals 
+            (target_amount, target_date, current_amount, monthly_savings)
+            VALUES (%s, %s, %s, %s)
+            RETURNING target_amount, target_date, current_amount, monthly_savings
+        ''', (
+            goal.target_amount,
+            goal.target_date,
+            goal.current_amount,
+            goal.monthly_savings
+        ))
+        
+        result = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "target_amount": result[0],
+            "target_date": result[1],
+            "current_amount": result[2],
+            "monthly_savings": result[3]
+        }
+    except Exception as e:
+        logger.error(f"Error creating savings goal: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/savings/goal/", response_model=SavingsGoal)
+def get_savings_goal():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT target_amount, target_date, current_amount, monthly_savings
+            FROM savings_goals
+            ORDER BY id DESC
+            LIMIT 1
+        ''')
+        
+        goal = cursor.fetchone()
+        if not goal:
+            raise HTTPException(status_code=404, detail="No savings goal found")
+        
+        return {
+            "target_amount": goal[0],
+            "target_date": goal[1],
+            "current_amount": goal[2],
+            "monthly_savings": goal[3]
+        }
+    except Exception as e:
+        logger.error(f"Error fetching savings goal: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch savings goal")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/savings/transaction/", response_model=SavingsTransaction)
+def add_savings_transaction(transaction: SavingsTransaction):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get current goal
+        cursor.execute('''
+            SELECT id, current_amount FROM savings_goals
+            ORDER BY id DESC LIMIT 1
+        ''')
+        goal = cursor.fetchone()
+        if not goal:
+            raise HTTPException(status_code=404, detail="No savings goal found")
+        
+        goal_id, current_amount = goal
+        
+        # Update current amount
+        new_amount = current_amount + transaction.amount if transaction.type == "deposit" else current_amount - transaction.amount
+        if new_amount < 0:
+            raise HTTPException(status_code=400, detail="Insufficient funds")
+        
+        cursor.execute('''
+            UPDATE savings_goals
+            SET current_amount = %s
+            WHERE id = %s
+        ''', (new_amount, goal_id))
+        
+        # Record transaction
+        cursor.execute('''
+            INSERT INTO savings_transactions 
+            (goal_id, amount, date, type, description)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING amount, date, type, description
+        ''', (
+            goal_id,
+            transaction.amount,
+            transaction.date,
+            transaction.type,
+            transaction.description
+        ))
+        
+        result = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "amount": result[0],
+            "date": result[1],
+            "type": result[2],
+            "description": result[3]
+        }
+    except Exception as e:
+        logger.error(f"Error adding savings transaction: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/savings/transactions/", response_model=List[SavingsTransaction])
+def get_savings_transactions():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT amount, date, type, description
+            FROM savings_transactions
+            ORDER BY date DESC
+        ''')
+        
+        transactions = []
+        for row in cursor.fetchall():
+            transactions.append({
+                "amount": row[0],
+                "date": row[1],
+                "type": row[2],
+                "description": row[3]
+            })
+        
+        return transactions
+    except Exception as e:
+        logger.error(f"Error fetching savings transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch transactions")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/abstinence/tracker/", response_model=AbstinenceTracker)
+def create_abstinence_tracker(tracker: AbstinenceTracker):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO abstinence_trackers 
+            (start_date, end_date, current_streak, longest_streak, total_days, status)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING start_date, end_date, current_streak, longest_streak, total_days, status
+        ''', (
+            tracker.start_date,
+            tracker.end_date,
+            tracker.current_streak,
+            tracker.longest_streak,
+            tracker.total_days,
+            tracker.status
+        ))
+        
+        result = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "start_date": result[0],
+            "end_date": result[1],
+            "current_streak": result[2],
+            "longest_streak": result[3],
+            "total_days": result[4],
+            "status": result[5]
+        }
+    except Exception as e:
+        logger.error(f"Error creating abstinence tracker: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/abstinence/tracker/", response_model=AbstinenceTracker)
+def get_abstinence_tracker():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT start_date, end_date, current_streak, longest_streak, total_days, status
+            FROM abstinence_trackers
+            ORDER BY id DESC
+            LIMIT 1
+        ''')
+        
+        tracker = cursor.fetchone()
+        if not tracker:
+            raise HTTPException(status_code=404, detail="No abstinence tracker found")
+        
+        return {
+            "start_date": tracker[0],
+            "end_date": tracker[1],
+            "current_streak": tracker[2],
+            "longest_streak": tracker[3],
+            "total_days": tracker[4],
+            "status": tracker[5]
+        }
+    except Exception as e:
+        logger.error(f"Error fetching abstinence tracker: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch tracker")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/abstinence/checkin/", response_model=AbstinenceCheckIn)
+def add_abstinence_checkin(checkin: AbstinenceCheckIn):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get current tracker
+        cursor.execute('''
+            SELECT id, current_streak, longest_streak, total_days 
+            FROM abstinence_trackers
+            ORDER BY id DESC LIMIT 1
+        ''')
+        tracker = cursor.fetchone()
+        if not tracker:
+            raise HTTPException(status_code=404, detail="No abstinence tracker found")
+        
+        tracker_id, current_streak, longest_streak, total_days = tracker
+        
+        # Update tracker stats
+        if checkin.success:
+            new_streak = current_streak + 1
+            new_longest = max(longest_streak, new_streak)
+            new_total = total_days + 1
+        else:
+            new_streak = 0
+            new_longest = longest_streak
+            new_total = total_days
+            
+        cursor.execute('''
+            UPDATE abstinence_trackers
+            SET current_streak = %s, longest_streak = %s, total_days = %s
+            WHERE id = %s
+        ''', (new_streak, new_longest, new_total, tracker_id))
+        
+        # Record check-in
+        cursor.execute('''
+            INSERT INTO abstinence_checkins 
+            (tracker_id, date, success, notes)
+            VALUES (%s, %s, %s, %s)
+            RETURNING date, success, notes
+        ''', (
+            tracker_id,
+            checkin.date,
+            checkin.success,
+            checkin.notes
+        ))
+        
+        result = cursor.fetchone()
+        conn.commit()
+        
+        return {
+            "date": result[0],
+            "success": result[1],
+            "notes": result[2]
+        }
+    except Exception as e:
+        logger.error(f"Error adding abstinence check-in: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/abstinence/checkins/", response_model=List[AbstinenceCheckIn])
+def get_abstinence_checkins():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT date, success, notes
+            FROM abstinence_checkins
+            ORDER BY date DESC
+        ''')
+        
+        checkins = []
+        for row in cursor.fetchall():
+            checkins.append({
+                "date": row[0],
+                "success": row[1],
+                "notes": row[2]
+            })
+        
+        return checkins
+    except Exception as e:
+        logger.error(f"Error fetching abstinence check-ins: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch check-ins")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/savings/progress/")
+def get_savings_progress():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get current goal
+        cursor.execute('''
+            SELECT target_amount, target_date, current_amount, monthly_savings
+            FROM savings_goals
+            ORDER BY id DESC LIMIT 1
+        ''')
+        goal = cursor.fetchone()
+        if not goal:
+            raise HTTPException(status_code=404, detail="No savings goal found")
+        
+        target_amount, target_date, current_amount, monthly_savings = goal
+        
+        # Calculate progress
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        total_months = (target_date.year - today.year) * 12 + target_date.month - today.month
+        total_months = max(total_months, 1)  # Ensure at least 1 month
+        
+        expected_amount = monthly_savings * (total_months - ((target_date.year - today.year) * 12 + target_date.month - today.month))
+        progress_percent = (current_amount / target_amount) * 100
+        months_remaining = max(0, (target_date.year - today.year) * 12 + target_date.month - today.month)
+        
+        return {
+            "target_amount": target_amount,
+            "current_amount": current_amount,
+            "progress_percent": round(progress_percent, 2),
+            "months_remaining": months_remaining,
+            "monthly_savings": monthly_savings,
+            "on_track": current_amount >= expected_amount
+        }
+    except Exception as e:
+        logger.error(f"Error calculating savings progress: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate progress")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/abstinence/progress/")
+def get_abstinence_progress():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get current tracker
+        cursor.execute('''
+            SELECT start_date, end_date, current_streak, longest_streak, total_days
+            FROM abstinence_trackers
+            ORDER BY id DESC LIMIT 1
+        ''')
+        tracker = cursor.fetchone()
+        if not tracker:
+            raise HTTPException(status_code=404, detail="No abstinence tracker found")
+        
+        start_date, end_date, current_streak, longest_streak, total_days = tracker
+        
+        # Calculate progress
+        start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        
+        total_days_planned = (end_date - start_date).days
+        days_completed = (today - start_date).days
+        success_rate = (total_days / days_completed * 100) if days_completed > 0 else 0
+        
+        return {
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+            "total_days": total_days,
+            "days_completed": days_completed,
+            "total_days_planned": total_days_planned,
+            "success_rate": round(success_rate, 2),
+            "days_remaining": max(0, (end_date - today).days)
+        }
+    except Exception as e:
+        logger.error(f"Error calculating abstinence progress: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate progress")
+    finally:
+        if conn:
+            conn.close()  
 
 # Run the application
 if __name__ == "__main__":
