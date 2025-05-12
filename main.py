@@ -1973,7 +1973,7 @@ def upload_files(
             
             # Save file synchronously
             with open(file_path, "wb") as buffer:
-                buffer.write(file.file.read())
+                shutil.copyfileobj(file.file, buffer)  # Changed from buffer.write()
             
             file_size = file_path.stat().st_size
             
@@ -1987,7 +1987,7 @@ def upload_files(
                 file_size,
                 folder_id,
                 str(file_path)
-            ))
+            )
             
             uploaded_files.append({
                 "id": file_id,
