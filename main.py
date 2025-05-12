@@ -143,6 +143,7 @@ class FolderContents(BaseModel):
 
 class FolderCreate(BaseModel):
     name: str
+    parent_id: Optional[str] = None
     
 class DonorCreate(BaseModel):
     name: str
@@ -1890,6 +1891,7 @@ def create_folder(folder_data: FolderCreate):
         folder_id = str(uuid.uuid4())
         
         if folder_data.parent_id:
+            # Check if parent folder exists
             cursor.execute('SELECT id FROM folders WHERE id = %s', (folder_data.parent_id,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail="Parent folder not found")
@@ -1913,7 +1915,7 @@ def create_folder(folder_data: FolderCreate):
         logger.error(f"Error creating folder: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to create folder")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
             conn.close()
