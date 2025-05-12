@@ -1881,7 +1881,7 @@ def get_gross_profit():
             conn.close()
 
 @app.post("/folders/", response_model=Folder)
-def create_folder(name: str = Form(...), parent_id: Optional[str] = Form(None)):
+def create_folder(folder_data: FolderCreate):
     conn = None
     try:
         conn = get_db()
@@ -1889,8 +1889,8 @@ def create_folder(name: str = Form(...), parent_id: Optional[str] = Form(None)):
         
         folder_id = str(uuid.uuid4())
         
-        if parent_id:
-            cursor.execute('SELECT id FROM folders WHERE id = %s', (parent_id,))
+        if folder_data.parent_id:
+            cursor.execute('SELECT id FROM folders WHERE id = %s', (folder_data.parent_id,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail="Parent folder not found")
             
@@ -1898,13 +1898,13 @@ def create_folder(name: str = Form(...), parent_id: Optional[str] = Form(None)):
                 INSERT INTO folders (id, name, parent_id)
                 VALUES (%s, %s, %s)
                 RETURNING id, name, parent_id
-            ''', (folder_id, name, parent_id))
+            ''', (folder_id, folder_data.name, folder_data.parent_id))
         else:
             cursor.execute('''
                 INSERT INTO folders (id, name)
                 VALUES (%s, %s)
                 RETURNING id, name, parent_id
-            ''', (folder_id, name))
+            ''', (folder_id, folder_data.name))
         
         folder = cursor.fetchone()
         conn.commit()
