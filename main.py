@@ -1973,7 +1973,7 @@ def upload_files(
             
             # Save file synchronously
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)  # Changed from buffer.write()
+                buffer.write(file.file.read())
             
             file_size = file_path.stat().st_size
             
@@ -1987,7 +1987,7 @@ def upload_files(
                 file_size,
                 folder_id,
                 str(file_path)
-            )
+            ))
             
             uploaded_files.append({
                 "id": file_id,
@@ -2006,7 +2006,7 @@ def upload_files(
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/files/{file_id}/download")
 def download_file(file_id: str):
     conn = None
