@@ -367,33 +367,19 @@ def migrate_database():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Check if employee_id column exists in reports table
+        # Check if donor_name column exists in donations table
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
-            WHERE table_name='reports' AND column_name='employee_id'
+            WHERE table_name='donations' AND column_name='donor_name'
         """)
         if not cursor.fetchone():
-            # Add the employee_id column if it doesn't exist
+            # Add the donor_name column if it doesn't exist
             cursor.execute("""
-                ALTER TABLE reports 
-                ADD COLUMN employee_id INTEGER REFERENCES employees(id)
+                ALTER TABLE donations 
+                ADD COLUMN donor_name TEXT
             """)
-            logger.info("Added employee_id column to reports table")
-        
-        # Check if submitted_by column exists in reports table
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name='reports' AND column_name='submitted_by'
-        """)
-        if not cursor.fetchone():
-            # Add the submitted_by column if it doesn't exist
-            cursor.execute("""
-                ALTER TABLE reports 
-                ADD COLUMN submitted_by INTEGER REFERENCES employees(id)
-            """)
-            logger.info("Added submitted_by column to reports table")
+            logger.info("Added donor_name column to donations table")
         
         conn.commit()
     except Exception as e:
@@ -560,6 +546,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS donations (
                 id SERIAL PRIMARY KEY,
                 donor_id INTEGER REFERENCES donors(id) ON DELETE SET NULL,  
+                donor_name TEXT,  # Add this line to include donor_name directly
                 amount FLOAT NOT NULL,
                 payment_method TEXT NOT NULL,
                 date DATE NOT NULL,
@@ -568,7 +555,8 @@ def init_db():
                 status TEXT DEFAULT 'completed',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        ''') 
+        ''')
+
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
@@ -2278,8 +2266,13 @@ def get_donations():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, donor_name, amount, payment_method, date, project, notes, status, created_at
-            FROM donations
+            SELECT d.id, 
+                   COALESCE(d.donor_name, dn.name) as donor_name, 
+                   d.amount, d.payment_method, 
+                   d.date, d.project, d.notes, 
+                   d.status, d.created_at
+            FROM donations d
+            LEFT JOIN donors dn ON d.donor_id = dn.id
             ORDER BY date DESC
         ''')
         
@@ -2304,7 +2297,7 @@ def get_donations():
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/program-areas/", response_model=List[ProgramArea])
 def get_program_areas():
     conn = None
