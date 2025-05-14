@@ -355,6 +355,20 @@ class BankAccount(BaseModel):
     name: str
     account_number: str
     balance: float
+    
+class ActivityBudgetApproval(BaseModel):
+    activity_id: int
+    approved: bool
+    remarks: Optional[str] = None
+
+class ActivityBudgetStatus(BaseModel):
+    activity_id: int
+    status: str  # "pending", "approved", "rejected"
+    budget_amount: float
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    approver_id: Optional[int] = None
+    remarks: Optional[str] = None
    
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
@@ -4307,7 +4321,236 @@ def get_activity_budget_items(activity_id: int):
     finally:
         if conn:
             conn.close()
+@app.post("/activities/{activity_id}/submit-budget/")
+def submit_activity_budget(activity_id: int):
+    """
+    Submits an activity budget for approval
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get activity and its budget
+        cursor.execute('''
+            SELECT a.id, a.name, a.budget, a.project_id, p.name as project_name
+            FROM activities a
+            JOIN projects p ON a.project_id = p.id
+            WHERE a.id = %s
+        ''', (activity_id,))
+        
+        activity = cursor.fetchone()
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        # Check if budget already submitted
+        cursor.execute('''
+            SELECT id FROM activity_budget_approvals 
+            WHERE activity_id = %s AND status = 'pending'
+        ''', (activity_id,))
+        
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Budget already submitted for approval")
+            
+        # Create budget approval request
+        cursor.execute('''
+            INSERT INTO activity_budget_approvals 
+            (activity_id, status, budget_amount, project_id)
+            VALUES (%s, 'pending', %s, %s)
+            RETURNING id
+        ''', (activity_id, activity[2], activity[3]))
+        
+        conn.commit()
+        
+        return {
+            "message": "Activity budget submitted for approval",
+            "activity_id": activity_id,
+            "activity_name": activity[1],
+            "budget_amount": activity[2],
+            "project_name": activity[4]
+        }
+    except Exception as e:
+        logger.error(f"Error submitting activity budget: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
+@app.get("/activities/pending-budgets/", response_model=List[ActivityBudgetStatus])
+def get_pending_budgets():
+    """
+    Gets all activity budgets pending approval
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT aba.id, aba.activity_id, a.name as activity_name, 
+                   aba.budget_amount, aba.status, aba.created_at,
+                   p.name as project_name, p.id as project_id
+            FROM activity_budget_approvals aba
+            JOIN activities a ON aba.activity_id = a.id
+            JOIN projects p ON aba.project_id = p.id
+            WHERE aba.status = 'pending'
+            ORDER BY aba.created_at DESC
+        ''')
+        
+        budgets = []
+        for row in cursor.fetchall():
+            budgets.append({
+                "id": row[0],
+                "activity_id": row[1],
+                "activity_name": row[2],
+                "budget_amount": row[3],
+                "status": row[4],
+                "created_at": row[5],
+                "project_name": row[6],
+                "project_id": row[7]
+            })
+            
+        return budgets
+    except Exception as e:
+        logger.error(f"Error fetching pending budgets: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch pending budgets")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/activities/{activity_id}/approve-budget/")
+def approve_activity_budget(activity_id: int, approval: ActivityBudgetApproval):
+    """
+    Approves or rejects an activity budget
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get the budget approval request
+        cursor.execute('''
+            SELECT aba.id, aba.budget_amount, aba.project_id, 
+                   p.name as project_name, pa.name as program_area
+            FROM activity_budget_approvals aba
+            JOIN projects p ON aba.project_id = p.id
+            JOIN program_areas pa ON p.program_area_id = pa.id
+            WHERE aba.activity_id = %s AND aba.status = 'pending'
+        ''', (activity_id,))
+        
+        budget_request = cursor.fetchone()
+        if not budget_request:
+            raise HTTPException(status_code=404, detail="No pending budget request found for this activity")
+            
+        budget_id = budget_request[0]
+        budget_amount = budget_request[1]
+        project_id = budget_request[2]
+        project_name = budget_request[3]
+        program_area = budget_request[4]
+        
+        # Update the approval status
+        cursor.execute('''
+            UPDATE activity_budget_approvals
+            SET status = %s, 
+                approved_at = CURRENT_TIMESTAMP,
+                remarks = %s
+            WHERE id = %s
+            RETURNING id
+        ''', ('approved' if approval.approved else 'rejected', 
+              approval.remarks, budget_id))
+        
+        if not cursor.fetchone():
+            raise HTTPException(status_code=500, detail="Failed to update budget approval")
+            
+        if approval.approved:
+            # Deduct funds from program area and main account
+            cursor.execute('''
+                UPDATE program_areas
+                SET balance = balance - %s
+                WHERE name = %s
+                RETURNING balance
+            ''', (budget_amount, program_area))
+            
+            if not cursor.fetchone():
+                raise HTTPException(status_code=400, detail="Failed to deduct from program area")
+                
+            cursor.execute('''
+                UPDATE bank_accounts
+                SET balance = balance - %s
+                WHERE name = 'Main Account'
+                RETURNING balance
+            ''', (budget_amount,))
+            
+            if not cursor.fetchone():
+                raise HTTPException(status_code=400, detail="Failed to deduct from main account")
+                
+            # Mark activity as approved
+            cursor.execute('''
+                UPDATE activities
+                SET status = 'approved'
+                WHERE id = %s
+            ''', (activity_id,))
+            
+        conn.commit()
+        
+        return {
+            "message": "Activity budget " + ("approved" if approval.approved else "rejected"),
+            "activity_id": activity_id,
+            "budget_amount": budget_amount,
+            "project_name": project_name,
+            "program_area": program_area,
+            "new_status": "approved" if approval.approved else "rejected"
+        }
+    except Exception as e:
+        logger.error(f"Error approving activity budget: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/activities/{activity_id}/budget-status/", response_model=ActivityBudgetStatus)
+def get_activity_budget_status(activity_id: int):
+    """
+    Gets the approval status of an activity budget
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, activity_id, status, budget_amount, 
+                   created_at, approved_at, remarks
+            FROM activity_budget_approvals
+            WHERE activity_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (activity_id,))
+        
+        status = cursor.fetchone()
+        if not status:
+            raise HTTPException(status_code=404, detail="No budget status found for this activity")
+            
+        return {
+            "id": status[0],
+            "activity_id": status[1],
+            "status": status[2],
+            "budget_amount": status[3],
+            "created_at": status[4],
+            "approved_at": status[5],
+            "remarks": status[6]
+        }
+    except Exception as e:
+        logger.error(f"Error fetching budget status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch budget status")
+    finally:
+        if conn:
+            conn.close()
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
