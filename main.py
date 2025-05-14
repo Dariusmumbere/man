@@ -144,6 +144,12 @@ class FolderContents(BaseModel):
 class FolderCreate(BaseModel):
     name: str
     parent_id: Optional[str] = None
+
+class DonorStats(BaseModel):
+    donation_count: int
+    total_donated: float
+    first_donation: Optional[date] = None
+    last_donation: Optional[date] = None
     
 class DonorCreate(BaseModel):
     name: str
@@ -169,9 +175,11 @@ class Donor(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
-    donor_type: Optional[str] = None  # "individual", "corporate", "foundation", etc.
+    donor_type: Optional[str] = None
     notes: Optional[str] = None
+    category: Optional[str] = "one-time"
     created_at: Optional[datetime] = None
+    stats: Optional[DonorStats] = None
 
 class DonationCreate(BaseModel):
     donor_name: str
