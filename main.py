@@ -2473,19 +2473,35 @@ def get_donors(search: Optional[str] = None):
         conn = get_db()
         cursor = conn.cursor()
         
-        # Use DISTINCT ON to ensure unique donors
+        # Get donors with their stats
         if search:
             cursor.execute('''
-                SELECT DISTINCT ON (id) id, name, email, phone, address, donor_type, notes, category, created_at
-                FROM donors
-                WHERE name ILIKE %s OR email ILIKE %s OR phone ILIKE %s
-                ORDER BY id, name
+                SELECT 
+                    d.id, d.name, d.email, d.phone, d.address, 
+                    d.donor_type, d.notes, d.category, d.created_at,
+                    COUNT(dn.id) as donation_count,
+                    COALESCE(SUM(dn.amount), 0) as total_donated,
+                    MIN(dn.date) as first_donation,
+                    MAX(dn.date) as last_donation
+                FROM donors d
+                LEFT JOIN donations dn ON d.id = dn.donor_id
+                WHERE d.name ILIKE %s OR d.email ILIKE %s OR d.phone ILIKE %s
+                GROUP BY d.id
+                ORDER BY d.name
             ''', (f"%{search}%", f"%{search}%", f"%{search}%"))
         else:
             cursor.execute('''
-                SELECT DISTINCT ON (id) id, name, email, phone, address, donor_type, notes, category, created_at
-                FROM donors
-                ORDER BY id, name
+                SELECT 
+                    d.id, d.name, d.email, d.phone, d.address, 
+                    d.donor_type, d.notes, d.category, d.created_at,
+                    COUNT(dn.id) as donation_count,
+                    COALESCE(SUM(dn.amount), 0) as total_donated,
+                    MIN(dn.date) as first_donation,
+                    MAX(dn.date) as last_donation
+                FROM donors d
+                LEFT JOIN donations dn ON d.id = dn.donor_id
+                GROUP BY d.id
+                ORDER BY d.name
             ''')
         
         donors = []
@@ -2498,8 +2514,14 @@ def get_donors(search: Optional[str] = None):
                 "address": row[4],
                 "donor_type": row[5],
                 "notes": row[6],
-                "category": row[7] if len(row) > 7 else "one-time",
-                "created_at": row[8] if len(row) > 8 else None
+                "category": row[7],
+                "created_at": row[8],
+                "stats": {
+                    "donation_count": row[9],
+                    "total_donated": float(row[10]),
+                    "first_donation": row[11],
+                    "last_donation": row[12]
+                }
             })
             
         return donors
@@ -2517,8 +2539,9 @@ def get_donor(donor_id: int):
         conn = get_db()
         cursor = conn.cursor()
         
+        # Get donor basic info
         cursor.execute('''
-            SELECT id, name, email, phone, address, donor_type, notes, created_at
+            SELECT id, name, email, phone, address, donor_type, notes, category, created_at
             FROM donors
             WHERE id = %s
         ''', (donor_id,))
@@ -2527,6 +2550,19 @@ def get_donor(donor_id: int):
         if not donor:
             raise HTTPException(status_code=404, detail="Donor not found")
             
+        # Get donor statistics
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as donation_count,
+                COALESCE(SUM(amount), 0) as total_donated,
+                MIN(date) as first_donation,
+                MAX(date) as last_donation
+            FROM donations
+            WHERE donor_id = %s
+        ''', (donor_id,))
+        
+        stats = cursor.fetchone()
+        
         return {
             "id": donor[0],
             "name": donor[1],
@@ -2535,7 +2571,14 @@ def get_donor(donor_id: int):
             "address": donor[4],
             "donor_type": donor[5],
             "notes": donor[6],
-            "created_at": donor[7]
+            "category": donor[7],
+            "created_at": donor[8],
+            "stats": {
+                "donation_count": stats[0] if stats else 0,
+                "total_donated": float(stats[1]) if stats else 0.0,
+                "first_donation": stats[2] if stats else None,
+                "last_donation": stats[3] if stats else None
+            }
         }
     except Exception as e:
         logger.error(f"Error fetching donor: {e}")
