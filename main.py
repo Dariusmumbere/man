@@ -2396,33 +2396,76 @@ def delete_donation(donation_id: int):
         conn = get_db()
         cursor = conn.cursor()
         
-        # First get the donation to check if it exists
-        cursor.execute('SELECT * FROM transactions WHERE id = %s', (donation_id,))
+        # First get the donation details to check if it exists and get amount/project
+        cursor.execute('''
+            SELECT amount, project, status 
+            FROM donations 
+            WHERE id = %s
+        ''', (donation_id,))
         donation = cursor.fetchone()
+        
         if not donation:
             raise HTTPException(status_code=404, detail="Donation not found")
+            
+        amount, project, status = donation
+        
+        # Only allow deletion if status is 'pending' or 'completed'
+        if status not in ['pending', 'completed']:
+            raise HTTPException(
+                status_code=400, 
+                detail="Cannot delete donation with current status"
+            )
         
         # Delete the donation
-        cursor.execute('DELETE FROM transactions WHERE id = %s', (donation_id,))
+        cursor.execute('DELETE FROM donations WHERE id = %s', (donation_id,))
+        
+        # If donation was completed, reverse the accounting entries
+        if status == 'completed':
+            # Reverse the program area balance if project was specified
+            if project:
+                cursor.execute('''
+                    UPDATE program_areas
+                    SET balance = balance - %s
+                    WHERE name = %s
+                    RETURNING balance
+                ''', (amount, project))
+                
+                if not cursor.fetchone():
+                    logger.warning(f"Failed to update program area {project} when deleting donation")
+            
+            # Reverse the main account balance
+            cursor.execute('''
+                UPDATE bank_accounts
+                SET balance = balance - %s
+                WHERE name = 'Main Account'
+                RETURNING balance
+            ''', (amount,))
+            
+            if not cursor.fetchone():
+                logger.error("Failed to update main account when deleting donation")
         
         # Create a notification about the deletion
-        notification_message = f"Donation record {donation_id} deleted"
+        notification_message = f"Donation {donation_id} (Amount: {amount}) deleted"
         cursor.execute('''
             INSERT INTO notifications (message, type)
-            VALUES (%s, %s)
-        ''', (notification_message, "donation_deletion"))
+            VALUES (%s, 'donation_deletion')
+        ''', (notification_message,))
         
         conn.commit()
-        return {"message": "Donation deleted successfully"}
+        return {"message": "Donation deleted successfully and accounting entries reversed"}
+        
     except Exception as e:
         logger.error(f"Error deleting donation: {e}")
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete donation")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to delete donation: {str(e)}"
+        )
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/donors/", response_model=List[Donor])
 def get_donors(search: Optional[str] = None):
     conn = None
