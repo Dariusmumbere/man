@@ -174,7 +174,7 @@ class Donor(BaseModel):
     created_at: Optional[datetime] = None
 
 class DonationCreate(BaseModel):
-    donor_name: str
+    donor_id: int 
     amount: float
     payment_method: str
     date: date
@@ -355,19 +355,7 @@ class BankAccount(BaseModel):
     name: str
     account_number: str
     balance: float
-    
-class ActivityBudgetApproval(BaseModel):
-    activity_id: int
-    approved: bool
-    remarks: Optional[str] = None
-
-class BudgetApprovalStatus(BaseModel):
-    activity_id: int
-    approved: bool
-    approved_by: Optional[str] = None
-    approved_at: Optional[datetime] = None
-    remarks: Optional[str] = None
-  
+   
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -426,7 +414,6 @@ def init_db():
         cursor = conn.cursor()
    
         cursor.execute('DROP TABLE IF EXISTS diary_entries')
-        cursor.execute('DROP TABLE IF EXISTS bank_accounts')
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS donors (
@@ -729,24 +716,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS budget_approvals (
-                id SERIAL PRIMARY KEY,
-                activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
-                approved BOOLEAN NOT NULL,
-                approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                approved_by TEXT,
-                remarks TEXT
-            )
-        ''')
-
-        # Add program_area_id to projects table
-        cursor.execute('''
-            ALTER TABLE projects
-            ADD COLUMN IF NOT EXISTS program_area_id INTEGER REFERENCES program_areas(id)
-        ''')
-
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS program_areas (
                 id SERIAL PRIMARY KEY,
@@ -2240,11 +2209,11 @@ def create_donation(donation: DonationCreate):
         
         # Insert donation
         cursor.execute('''
-            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes, status)
+            INSERT INTO donations (donor_id, amount, payment_method, date, project, notes, status)
             VALUES (%s, %s, %s, %s, %s, %s, 'completed')
-            RETURNING id, donor_name, amount, payment_method, date, project, notes, status, created_at
+            RETURNING id, donor_id, amount, payment_method, date, project, notes, status, created_at
         ''', (
-            donation.donor_name,
+            donation.donor_id,
             donation.amount,
             donation.payment_method,
             donation.date,
@@ -2299,8 +2268,7 @@ def create_donation(donation: DonationCreate):
     finally:
         if conn:
             conn.close()
-            
-            
+                        
 @app.get("/donations/", response_model=List[Donation])
 def get_donations():
     conn = None
@@ -2309,7 +2277,7 @@ def get_donations():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, donor_name, amount, payment_method, date, project, notes, status, created_at
+            SELECT id, donor_id, amount, payment_method, date, project, notes, status, created_at
             FROM donations
             ORDER BY date DESC
         ''')
@@ -2318,7 +2286,7 @@ def get_donations():
         for row in cursor.fetchall():
             donations.append({
                 "id": row[0],
-                "donor_name": row[1],
+                "donor_id": row[1],
                 "amount": row[2],
                 "payment_method": row[3],
                 "date": row[4],
@@ -2335,7 +2303,7 @@ def get_donations():
     finally:
         if conn:
             conn.close()
-
+            
 @app.get("/program-areas/", response_model=List[ProgramArea])
 def get_program_areas():
     conn = None
@@ -4339,271 +4307,6 @@ def get_activity_budget_items(activity_id: int):
         if conn:
             conn.close()
 
-@app.post("/activities/{activity_id}/submit-budget/")
-def submit_activity_budget(activity_id: int):
-    """
-    Submit an activity budget for approval.
-    This changes the activity status to 'pending_approval'.
-    """
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Verify activity exists
-        cursor.execute('''
-            SELECT id, project_id, budget, status 
-            FROM activities 
-            WHERE id = %s
-        ''', (activity_id,))
-        activity = cursor.fetchone()
-        
-        if not activity:
-            raise HTTPException(status_code=404, detail="Activity not found")
-            
-        if activity[3] != 'planned':
-            raise HTTPException(
-                status_code=400, 
-                detail="Only activities in 'planned' status can submit budgets"
-            )
-        
-        # Update activity status to pending_approval
-        cursor.execute('''
-            UPDATE activities 
-            SET status = 'pending_approval' 
-            WHERE id = %s
-            RETURNING id, name, project_id, budget, status
-        ''', (activity_id,))
-        
-        updated_activity = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "message": "Activity budget submitted for approval",
-            "activity_id": updated_activity[0],
-            "name": updated_activity[1],
-            "project_id": updated_activity[2],
-            "budget": updated_activity[3],
-            "status": updated_activity[4]
-        }
-    except Exception as e:
-        logger.error(f"Error submitting activity budget: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
-
-@app.get("/activities/pending-approval/", response_model=List[Activity])
-def get_pending_approval_activities():
-    """
-    Get all activities pending budget approval (for director dashboard)
-    """
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT a.id, a.name, a.project_id, p.name as project_name, 
-                   a.description, a.start_date, a.end_date, 
-                   a.budget, a.status, a.created_at
-            FROM activities a
-            JOIN projects p ON a.project_id = p.id
-            WHERE a.status = 'pending_approval'
-            ORDER BY a.created_at DESC
-        ''')
-        
-        activities = []
-        for row in cursor.fetchall():
-            activities.append({
-                "id": row[0],
-                "name": row[1],
-                "project_id": row[2],
-                "project_name": row[3],
-                "description": row[4],
-                "start_date": row[5].strftime("%Y-%m-%d"),
-                "end_date": row[6].strftime("%Y-%m-%d"),
-                "budget": row[7],
-                "status": row[8],
-                "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S")
-            })
-            
-        return activities
-    except Exception as e:
-        logger.error(f"Error fetching pending approval activities: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch activities")
-    finally:
-        if conn:
-            conn.close()
-
-@app.post("/activities/{activity_id}/approve-budget/", response_model=BudgetApprovalStatus)
-def approve_activity_budget(activity_id: int, approval: ActivityBudgetApproval):
-    """
-    Approve or reject an activity budget (director action)
-    """
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Verify activity exists and is pending approval
-        cursor.execute('''
-            SELECT id, project_id, budget, status 
-            FROM activities 
-            WHERE id = %s
-        ''', (activity_id,))
-        activity = cursor.fetchone()
-        
-        if not activity:
-            raise HTTPException(status_code=404, detail="Activity not found")
-            
-        if activity[3] != 'pending_approval':
-            raise HTTPException(
-                status_code=400, 
-                detail="Only activities in 'pending_approval' status can be approved/rejected"
-            )
-        
-        project_id = activity[1]
-        budget_amount = activity[2]
-        
-        if approval.approved:
-            # Get project details to find the program area
-            cursor.execute('''
-                SELECT p.id, p.name, pa.name as program_area
-                FROM projects p
-                JOIN program_areas pa ON p.program_area_id = pa.id
-                WHERE p.id = %s
-            ''', (project_id,))
-            project = cursor.fetchone()
-            
-            if not project:
-                raise HTTPException(status_code=404, detail="Project not found")
-                
-            program_area = project[2]
-            
-            # Check if program area has sufficient funds
-            cursor.execute('''
-                SELECT balance FROM program_areas WHERE name = %s
-            ''', (program_area,))
-            program_balance = cursor.fetchone()[0]
-            
-            if program_balance < budget_amount:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Insufficient funds in program area '{program_area}'"
-                )
-            
-            # Check main account balance
-            cursor.execute('''
-                SELECT balance FROM bank_accounts WHERE name = 'Main Account'
-            ''')
-            main_balance = cursor.fetchone()[0]
-            
-            if main_balance < budget_amount:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Insufficient funds in main account"
-                )
-            
-            # Deduct from program area and main account
-            cursor.execute('''
-                UPDATE program_areas
-                SET balance = balance - %s
-                WHERE name = %s
-            ''', (budget_amount, program_area))
-            
-            cursor.execute('''
-                UPDATE bank_accounts
-                SET balance = balance - %s
-                WHERE name = 'Main Account'
-            ''', (budget_amount,))
-            
-            # Update activity status to approved
-            new_status = 'approved'
-        else:
-            # If rejected, just update status
-            new_status = 'rejected'
-        
-        # Update activity status
-        cursor.execute('''
-            UPDATE activities
-            SET status = %s
-            WHERE id = %s
-            RETURNING id, status
-        ''', (new_status, activity_id))
-        
-        updated_activity = cursor.fetchone()
-        
-        # Create approval record
-        cursor.execute('''
-            INSERT INTO budget_approvals (
-                activity_id, approved, approved_by, remarks
-            ) VALUES (%s, %s, %s, %s)
-            RETURNING id, activity_id, approved, approved_at, approved_by, remarks
-        ''', (
-            activity_id,
-            approval.approved,
-            "director",  # In a real app, this would be the logged-in user
-            approval.remarks
-        ))
-        
-        approval_record = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "activity_id": approval_record[1],
-            "approved": approval_record[2],
-            "approved_at": approval_record[3],
-            "approved_by": approval_record[4],
-            "remarks": approval_record[5]
-        }
-    except Exception as e:
-        logger.error(f"Error processing budget approval: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
-
-@app.get("/activities/{activity_id}/approval-status/", response_model=BudgetApprovalStatus)
-def get_budget_approval_status(activity_id: int):
-    """
-    Check the approval status of an activity budget
-    """
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, activity_id, approved, approved_at, approved_by, remarks
-            FROM budget_approvals
-            WHERE activity_id = %s
-            ORDER BY approved_at DESC
-            LIMIT 1
-        ''', (activity_id,))
-        
-        approval = cursor.fetchone()
-        
-        if not approval:
-            raise HTTPException(status_code=404, detail="No approval record found")
-            
-        return {
-            "activity_id": approval[1],
-            "approved": approval[2],
-            "approved_at": approval[3],
-            "approved_by": approval[4],
-            "remarks": approval[5]
-        }
-    except Exception as e:
-        logger.error(f"Error fetching approval status: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch approval status")
-    finally:
-        if conn:
-            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
