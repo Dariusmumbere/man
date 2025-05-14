@@ -174,7 +174,7 @@ class Donor(BaseModel):
     created_at: Optional[datetime] = None
 
 class DonationCreate(BaseModel):
-    donor_id: int 
+    donor_name: str
     amount: float
     payment_method: str
     date: date
@@ -2209,11 +2209,11 @@ def create_donation(donation: DonationCreate):
         
         # Insert donation
         cursor.execute('''
-            INSERT INTO donations (donor_id, amount, payment_method, date, project, notes, status)
+            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes, status)
             VALUES (%s, %s, %s, %s, %s, %s, 'completed')
-            RETURNING id, donor_id, amount, payment_method, date, project, notes, status, created_at
+            RETURNING id, donor_name, amount, payment_method, date, project, notes, status, created_at
         ''', (
-            donation.donor_id,
+            donation.donor_name,
             donation.amount,
             donation.payment_method,
             donation.date,
@@ -2268,7 +2268,8 @@ def create_donation(donation: DonationCreate):
     finally:
         if conn:
             conn.close()
-                        
+            
+            
 @app.get("/donations/", response_model=List[Donation])
 def get_donations():
     conn = None
@@ -2277,7 +2278,7 @@ def get_donations():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, donor_id, amount, payment_method, date, project, notes, status, created_at
+            SELECT id, donor_name, amount, payment_method, date, project, notes, status, created_at
             FROM donations
             ORDER BY date DESC
         ''')
@@ -2286,7 +2287,7 @@ def get_donations():
         for row in cursor.fetchall():
             donations.append({
                 "id": row[0],
-                "donor_id": row[1],
+                "donor_name": row[1],
                 "amount": row[2],
                 "payment_method": row[3],
                 "date": row[4],
@@ -2303,7 +2304,7 @@ def get_donations():
     finally:
         if conn:
             conn.close()
-            
+
 @app.get("/program-areas/", response_model=List[ProgramArea])
 def get_program_areas():
     conn = None
