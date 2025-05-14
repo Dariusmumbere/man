@@ -2209,8 +2209,8 @@ def create_donation(donation: DonationCreate):
         
         # Insert donation
         cursor.execute('''
-            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO donations (donor_name, amount, payment_method, date, project, notes, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'completed')
             RETURNING id, donor_name, amount, payment_method, date, project, notes, status, created_at
         ''', (
             donation.donor_name,
@@ -2223,20 +2223,29 @@ def create_donation(donation: DonationCreate):
         
         new_donation = cursor.fetchone()
         
-        # Update the appropriate program area balance
+        # Update the appropriate program area balance if project is specified
         if donation.project:
             cursor.execute('''
                 UPDATE program_areas
                 SET balance = balance + %s
                 WHERE name = %s
+                RETURNING balance
             ''', (donation.amount, donation.project))
+            
+            # Verify the program area was updated
+            if not cursor.fetchone():
+                raise HTTPException(status_code=400, detail=f"Program area '{donation.project}' not found")
         
         # Update main account balance
         cursor.execute('''
             UPDATE bank_accounts
             SET balance = balance + %s
             WHERE name = 'Main Account'
+            RETURNING balance
         ''', (donation.amount,))
+        
+        if not cursor.fetchone():
+            raise HTTPException(status_code=500, detail="Main account not found")
         
         conn.commit()
         
@@ -2259,6 +2268,7 @@ def create_donation(donation: DonationCreate):
     finally:
         if conn:
             conn.close()
+            
             
 @app.get("/donations/", response_model=List[Donation])
 def get_donations():
@@ -2363,7 +2373,7 @@ def get_dashboard_summary():
         cursor = conn.cursor()
         
         # Get total donations
-        cursor.execute('SELECT COALESCE(SUM(amount), 0) FROM donations')
+        cursor.execute('SELECT COALESCE(SUM(amount), 0) FROM donations WHERE status = %s', ('completed',))
         total_donations = cursor.fetchone()[0]
         
         # Get program area balances
