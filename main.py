@@ -4343,7 +4343,30 @@ def get_activity_budget_items(activity_id: int):
     finally:
         if conn:
             conn.close()
-
+            
+@app.put("/program-areas/reset/")
+def reset_program_areas():
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Reset all program areas to budget=0 and balance=0
+        cursor.execute('''
+            UPDATE program_areas
+            SET budget = 0, balance = 0
+        ''')
+        
+        conn.commit()
+        return {"message": "All program areas reset to 0 successfully"}
+    except Exception as e:
+        logger.error(f"Error resetting program areas: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail="Failed to reset program areas")
+    finally:
+        if conn:
+            conn.close()
 # Run the application
 if __name__ == "__main__":
     import uvicorn
