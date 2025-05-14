@@ -747,6 +747,26 @@ def init_db():
                 balance FLOAT DEFAULT 0
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS activity_budget_approvals (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER NOT NULL REFERENCES activities(id),
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                budget_amount REAL NOT NULL,
+                status TEXT NOT NULL,  -- 'pending', 'approved', 'rejected'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP,
+                approver_id INTEGER REFERENCES users(id),
+                remarks TEXT
+            )
+        ''')
+
+        # Add program_area_id to projects table
+        cursor.execute('''
+            ALTER TABLE projects 
+            ADD COLUMN IF NOT EXISTS program_area_id INTEGER REFERENCES program_areas(id)
+        ''')
         
         program_areas = [
             ("Main Account", 0),
