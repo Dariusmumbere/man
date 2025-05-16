@@ -734,6 +734,17 @@ def init_db():
                 balance FLOAT DEFAULT 0
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budget_approvals (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER NOT NULL REFERENCES activities(id),
+                requested_amount FLOAT NOT NULL,
+                approved_amount FLOAT,
+                approver_notes TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
         program_areas = [
             ("Main Account", 0),
@@ -4636,6 +4647,7 @@ def get_activity_approval(activity_id: int):
     finally:
         if conn:
             conn.close()
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
