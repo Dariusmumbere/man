@@ -179,7 +179,7 @@ class Donor(BaseModel):
     notes: Optional[str] = None
     category: Optional[str] = "one-time"
     created_at: Optional[datetime] = None
-    stats: Optional[DonorStats] = None
+    stats: Optional[Dict] = None 
 
 class DonationCreate(BaseModel):
     donor_name: str
@@ -368,18 +368,6 @@ class BudgetApproval(BaseModel):
     activity_id: int
     approved: bool
     remarks: Optional[str] = None   
-
-class Donor(BaseModel):
-    id: Optional[int] = None
-    name: str
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    donor_type: Optional[str] = None
-    notes: Optional[str] = None
-    category: Optional[str] = "one-time"
-    created_at: Optional[datetime] = None
-    stats: Optional[Dict] = None  # Changed from DonorStats to Dict for flexibility
 
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
