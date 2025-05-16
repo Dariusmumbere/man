@@ -374,9 +374,9 @@ class BudgetApprovalStatus(BaseModel):
     activity_id: int
     status: str  # "pending", "approved", "rejected"
     remarks: Optional[str] = None
-    approved_by: Optional[int] = None
     approved_at: Optional[datetime] = None
     created_at: datetime
+    
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -748,7 +748,7 @@ def init_db():
                 activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
                 status TEXT NOT NULL,  -- 'pending', 'approved', 'rejected'
                 remarks TEXT,
-                approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                approved_by INTEGER REFERENCES employees(id) ON DELETE SET NULL,
                 approved_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -4665,6 +4665,7 @@ def get_activity_budget_status(activity_id: int):
     finally:
         if conn:
             conn.close()
+            
 # Run the application
 if __name__ == "__main__":
     import uvicorn
