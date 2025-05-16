@@ -615,6 +615,11 @@ def init_db():
                 unit_price REAL NOT NULL,
                 total REAL GENERATED ALWAYS AS (quantity * unit_price) STORED,
                 category TEXT NOT NULL,
+                status TEXT DEFAULT 'draft',  -- 'draft', 'submitted', 'approved', 'rejected'
+                submitted_by INTEGER,         -- User ID who submitted
+                approved_by INTEGER,          -- User ID who approved
+                submitted_at TIMESTAMP,
+                approved_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
