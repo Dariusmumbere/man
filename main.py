@@ -363,7 +363,11 @@ class BankAccount(BaseModel):
     name: str
     account_number: str
     balance: float
-   
+    
+class BudgetApproval(BaseModel):
+    activity_id: int
+    approved: bool
+    remarks: Optional[str] = None   
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -727,6 +731,16 @@ def init_db():
                 name TEXT NOT NULL UNIQUE,
                 account_number TEXT NOT NULL,
                 balance FLOAT DEFAULT 0
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budget_approvals (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER REFERENCES activities(id),
+                approved BOOLEAN NOT NULL,
+                remarks TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by INTEGER REFERENCES users(id)
             )
         ''')
         
@@ -4415,6 +4429,98 @@ def reset_program_areas():
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail="Failed to reset program areas")
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/budget-approvals/")
+def approve_budget(approval: BudgetApproval):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get the activity and its budget
+        cursor.execute('''
+            SELECT a.id, a.budget, a.project_id, p.name as project_name 
+            FROM activities a
+            JOIN projects p ON a.project_id = p.id
+            WHERE a.id = %s
+        ''', (approval.activity_id,))
+        
+        activity = cursor.fetchone()
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        activity_id, budget_amount, project_id, project_name = activity
+        
+        if approval.approved:
+            # Check if project has enough funds
+            cursor.execute('''
+                SELECT balance FROM program_areas WHERE name = %s
+            ''', (project_name,))
+            
+            program_balance = cursor.fetchone()
+            if not program_balance:
+                raise HTTPException(status_code=400, detail=f"Program area '{project_name}' not found")
+                
+            program_balance = program_balance[0]
+            
+            if program_balance < budget_amount:
+                raise HTTPException(status_code=400, detail="Insufficient funds in program area")
+                
+            # Deduct from program area
+            cursor.execute('''
+                UPDATE program_areas
+                SET balance = balance - %s
+                WHERE name = %s
+            ''', (budget_amount, project_name))
+            
+            # Deduct from main account
+            cursor.execute('''
+                UPDATE bank_accounts
+                SET balance = balance - %s
+                WHERE name = 'Main Account'
+            ''', (budget_amount,))
+            
+            # Update activity status
+            cursor.execute('''
+                UPDATE activities
+                SET status = 'approved'
+                WHERE id = %s
+            ''', (activity_id,))
+            
+            # Record the approval
+            cursor.execute('''
+                INSERT INTO budget_approvals (activity_id, approved, remarks)
+                VALUES (%s, %s, %s)
+            ''', (activity_id, True, approval.remarks))
+            
+            conn.commit()
+            
+            return {"message": "Budget approved and funds deducted successfully"}
+        else:
+            # Just record the rejection
+            cursor.execute('''
+                UPDATE activities
+                SET status = 'rejected'
+                WHERE id = %s
+            ''', (activity_id,))
+            
+            cursor.execute('''
+                INSERT INTO budget_approvals (activity_id, approved, remarks)
+                VALUES (%s, %s, %s)
+            ''', (activity_id, False, approval.remarks))
+            
+            conn.commit()
+            
+            return {"message": "Budget rejected"}
+            
+    except Exception as e:
+        logger.error(f"Error processing budget approval: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
             conn.close()
