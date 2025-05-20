@@ -745,6 +745,51 @@ def init_db():
                 created_by INTEGER REFERENCES users(id)
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_goals (
+                id SERIAL PRIMARY KEY,
+                target_amount FLOAT NOT NULL,
+                current_amount FLOAT DEFAULT 0,
+                monthly_savings FLOAT NOT NULL,
+                target_date DATE NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_transactions (
+                id SERIAL PRIMARY KEY,
+                amount FLOAT NOT NULL,
+                type VARCHAR(10) NOT NULL,  -- 'deposit' or 'withdrawal'
+                date DATE NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS abstinence_trackers (
+                id SERIAL PRIMARY KEY,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                current_streak INTEGER DEFAULT 0,
+                longest_streak INTEGER DEFAULT 0,
+                total_days INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS abstinence_checkins (
+                id SERIAL PRIMARY KEY,
+                date DATE NOT NULL UNIQUE,
+                success BOOLEAN NOT NULL,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
         program_areas = [
             ("Main Account", 0),
