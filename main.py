@@ -369,6 +369,44 @@ class BudgetApproval(BaseModel):
     approved: bool
     remarks: Optional[str] = None   
 
+class SavingsGoal(BaseModel):
+    target_amount: float
+    current_amount: float
+    monthly_savings: float
+    target_date: date
+
+class Transaction(BaseModel):
+    id: Optional[int] = None
+    amount: float
+    type: str  # 'deposit' or 'withdrawal'
+    date: date
+    description: Optional[str] = None
+
+class AbstinenceTracker(BaseModel):
+    start_date: date
+    end_date: date
+    current_streak: int
+    longest_streak: int
+    total_days: int
+
+class CheckIn(BaseModel):
+    id: Optional[int] = None
+    date: date
+    success: bool
+    notes: Optional[str] = None
+
+class SavingsProgress(BaseModel):
+    progress_percent: float
+    months_remaining: int
+    monthly_savings: float
+    on_track: bool
+
+class AbstinenceProgress(BaseModel):
+    days_completed: int
+    days_remaining: int
+    total_days_planned: int
+    success_rate: float
+
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -717,6 +755,76 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        cur.execute("""
+                CREATE TABLE IF NOT EXISTS savings_goal (
+                    id SERIAL PRIMARY KEY,
+                    target_amount NUMERIC NOT NULL,
+                    current_amount NUMERIC NOT NULL DEFAULT 0,
+                    monthly_savings NUMERIC NOT NULL,
+                    target_date DATE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS savings_transactions (
+                    id SERIAL PRIMARY KEY,
+                    amount NUMERIC NOT NULL,
+                    type VARCHAR(20) NOT NULL CHECK (type IN ('deposit', 'withdrawal')),
+                    date DATE NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
+            # Create abstinence tables if they don't exist
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS abstinence_tracker (
+                    id SERIAL PRIMARY KEY,
+                    start_date DATE NOT NULL,
+                    end_date DATE NOT NULL,
+                    current_streak INTEGER NOT NULL DEFAULT 0,
+                    longest_streak INTEGER NOT NULL DEFAULT 0,
+                    total_days INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS abstinence_checkins (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL UNIQUE,
+                    success BOOLEAN NOT NULL,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
+            # Insert initial goal if none exists
+            cur.execute("SELECT COUNT(*) FROM savings_goal")
+            if cur.fetchone()['count'] == 0:
+                target_date = date.today() + timedelta(days=19*30)  # 19 months from now
+                cur.execute("""
+                    INSERT INTO savings_goal (target_amount, current_amount, monthly_savings, target_date)
+                    VALUES (100000000, 0, 5263157.89, %s)
+                """, (target_date,))
+            
+            # Insert initial abstinence tracker if none exists
+            cur.execute("SELECT COUNT(*) FROM abstinence_tracker")
+            if cur.fetchone()['count'] == 0:
+                end_date = date.today() + timedelta(days=19*30)  # 19 months from now
+                cur.execute("""
+                    INSERT INTO abstinence_tracker (start_date, end_date, current_streak, longest_streak, total_days)
+                    VALUES (%s, %s, 0, 0, 0)
+                """, (date.today(), end_date))
+            
+            conn.commit()
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+    finally:
+        conn.close()
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS program_areas (
                 id SERIAL PRIMARY KEY,
@@ -4619,6 +4727,218 @@ def create_donation_with_stats(donation: DonationCreate):
     finally:
         if conn:
             conn.close()
+
+@app.get("/savings/goal/", response_model=SavingsGoal)
+def get_savings_goal():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM savings_goal ORDER BY id DESC LIMIT 1")
+            goal = cur.fetchone()
+            if not goal:
+                raise HTTPException(status_code=404, detail="Savings goal not found")
+            return goal
+    finally:
+        conn.close()
+
+@app.get("/savings/progress/", response_model=SavingsProgress)
+def get_savings_progress():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get the savings goal
+            cur.execute("SELECT * FROM savings_goal ORDER BY id DESC LIMIT 1")
+            goal = cur.fetchone()
+            if not goal:
+                raise HTTPException(status_code=404, detail="Savings goal not found")
+            
+            # Calculate progress
+            progress_percent = (goal['current_amount'] / goal['target_amount']) * 100
+            today = date.today()
+            total_days = (goal['target_date'] - goal['created_at'].date()).days
+            days_elapsed = (today - goal['created_at'].date()).days
+            months_remaining = max(0, (goal['target_date'] - today).days // 30)
+            
+            # Check if on track
+            expected_progress = (days_elapsed / total_days) * 100 if total_days > 0 else 0
+            on_track = progress_percent >= expected_progress
+            
+            return {
+                "progress_percent": round(progress_percent, 2),
+                "months_remaining": months_remaining,
+                "monthly_savings": goal['monthly_savings'],
+                "on_track": on_track
+            }
+    finally:
+        conn.close()
+
+@app.get("/savings/transactions/", response_model=List[Transaction])
+def get_savings_transactions():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM savings_transactions ORDER BY date DESC")
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+@app.post("/savings/transaction/", response_model=Transaction)
+def create_savings_transaction(transaction: Transaction):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Insert the transaction
+            cur.execute("""
+                INSERT INTO savings_transactions (amount, type, date, description)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *
+            """, (transaction.amount, transaction.type, transaction.date, transaction.description))
+            new_transaction = cur.fetchone()
+            
+            # Update the current amount in the savings goal
+            if transaction.type == 'deposit':
+                cur.execute("""
+                    UPDATE savings_goal
+                    SET current_amount = current_amount + %s
+                    RETURNING *
+                """, (transaction.amount,))
+            else:
+                cur.execute("""
+                    UPDATE savings_goal
+                    SET current_amount = current_amount - %s
+                    RETURNING *
+                """, (transaction.amount,))
+            
+            conn.commit()
+            return new_transaction
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+# Abstinence Tracker Endpoints
+@app.get("/abstinence/tracker/", response_model=AbstinenceTracker)
+def get_abstinence_tracker():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM abstinence_tracker ORDER BY id DESC LIMIT 1")
+            tracker = cur.fetchone()
+            if not tracker:
+                raise HTTPException(status_code=404, detail="Abstinence tracker not found")
+            
+            # Calculate current streak and total days
+            cur.execute("""
+                SELECT date, success FROM abstinence_checkins
+                ORDER BY date DESC
+            """)
+            checkins = cur.fetchall()
+            
+            current_streak = 0
+            longest_streak = tracker['longest_streak']
+            total_days = len([c for c in checkins if c['success']])
+            
+            # Calculate current streak
+            for checkin in checkins:
+                if checkin['success']:
+                    current_streak += 1
+                else:
+                    break
+            
+            # Update tracker with current values
+            longest_streak = max(longest_streak, current_streak)
+            cur.execute("""
+                UPDATE abstinence_tracker
+                SET current_streak = %s, longest_streak = %s, total_days = %s
+                RETURNING *
+            """, (current_streak, longest_streak, total_days))
+            
+            updated_tracker = cur.fetchone()
+            conn.commit()
+            return updated_tracker
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/abstinence/progress/", response_model=AbstinenceProgress)
+def get_abstinence_progress():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get the abstinence tracker
+            cur.execute("SELECT * FROM abstinence_tracker ORDER BY id DESC LIMIT 1")
+            tracker = cur.fetchone()
+            if not tracker:
+                raise HTTPException(status_code=404, detail="Abstinence tracker not found")
+            
+            # Get all checkins
+            cur.execute("SELECT COUNT(*) as total FROM abstinence_checkins WHERE success = TRUE")
+            successful_days = cur.fetchone()['total']
+            
+            total_days_planned = (tracker['end_date'] - tracker['start_date']).days
+            days_remaining = max(0, (tracker['end_date'] - date.today()).days)
+            
+            success_rate = (successful_days / total_days_planned * 100) if total_days_planned > 0 else 0
+            
+            return {
+                "days_completed": successful_days,
+                "days_remaining": days_remaining,
+                "total_days_planned": total_days_planned,
+                "success_rate": round(success_rate, 2)
+            }
+    finally:
+        conn.close()
+
+@app.get("/abstinence/checkins/", response_model=List[CheckIn])
+def get_abstinence_checkins():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM abstinence_checkins ORDER BY date DESC")
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+@app.post("/abstinence/checkin/", response_model=CheckIn)
+def create_abstinence_checkin(checkin: CheckIn):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Check if checkin already exists for this date
+            cur.execute("SELECT id FROM abstinence_checkins WHERE date = %s", (checkin.date,))
+            existing = cur.fetchone()
+            
+            if existing:
+                # Update existing checkin
+                cur.execute("""
+                    UPDATE abstinence_checkins
+                    SET success = %s, notes = %s
+                    WHERE date = %s
+                    RETURNING *
+                """, (checkin.success, checkin.notes, checkin.date))
+            else:
+                # Insert new checkin
+                cur.execute("""
+                    INSERT INTO abstinence_checkins (date, success, notes)
+                    VALUES (%s, %s, %s)
+                    RETURNING *
+                """, (checkin.date, checkin.success, checkin.notes))
+            
+            new_checkin = cur.fetchone()
+            conn.commit()
+            return new_checkin
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/")
+def read_root():
+    return {"message": "Savings & Abstinence Tracker API"}
 
 # Run the application
 if __name__ == "__main__":
