@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import UploadFile, File, Form, Header, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from psycopg2.extras import RealDictCursor
 import os
 import psycopg2
 import logging
