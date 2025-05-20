@@ -18,6 +18,7 @@ from pathlib import Path
 from passlib.context import CryptContext
 import secrets
 import string
+import calendar
 
 app = FastAPI()
 
@@ -4755,7 +4756,14 @@ def get_savings_goal():
         goal = cursor.fetchone()
         
         if not goal:
-            raise HTTPException(status_code=404, detail="No savings goal found")
+            # Return a default goal if none exists
+            return {
+                "target_amount": 0,
+                "current_amount": 0,
+                "monthly_savings": 0,
+                "target_date": "2023-12-31",
+                "description": "No goal set yet"
+            }
             
         return {
             "target_amount": goal[0],
@@ -4770,7 +4778,7 @@ def get_savings_goal():
     finally:
         if conn:
             conn.close()
-
+            
 @app.put("/savings/goal/", response_model=SavingsGoal)
 def update_savings_goal(goal: SavingsGoal):
     conn = None
@@ -4951,7 +4959,15 @@ def get_abstinence_tracker():
         tracker = cursor.fetchone()
         
         if not tracker:
-            raise HTTPException(status_code=404, detail="No abstinence tracker found")
+            # Return a default tracker if none exists
+            today = date.today().isoformat()
+            return {
+                "start_date": today,
+                "end_date": today,
+                "current_streak": 0,
+                "longest_streak": 0,
+                "total_days": 0
+            }
             
         return {
             "start_date": tracker[0],
@@ -4966,7 +4982,7 @@ def get_abstinence_tracker():
     finally:
         if conn:
             conn.close()
-
+            
 @app.put("/abstinence/tracker/", response_model=AbstinenceTracker)
 def update_abstinence_tracker(tracker: AbstinenceTracker):
     conn = None
@@ -5200,7 +5216,7 @@ def get_abstinence_calendar(year: int, month: int):
             WHERE date BETWEEN %s AND %s
         ''', (start_date, end_date))
         
-        checkins = {row[0]: row[1] for row in cursor.fetchall()}
+        checkins = {row[0].strftime("%Y-%m-%d"): row[1] for row in cursor.fetchall()}
         
         # Generate calendar data
         cal = calendar.monthcalendar(year, month)
@@ -5211,27 +5227,10 @@ def get_abstinence_calendar(year: int, month: int):
             "year": year,
             "month": month,
             "month_name": calendar.month_name[month],
+            "checkins": checkins,
             "weeks": []
         }
         
-        for week in cal:
-            week_data = []
-            for day in week:
-                if day == 0:  # Day belongs to another month
-                    week_data.append(None)
-                else:
-                    date_str = f"{year}-{month:02d}-{day:02d}"
-                    status = checkins.get(date_str)
-                    
-                    day_data = {
-                        "day": day,
-                        "date": date_str,
-                        "status": status,
-                        "is_today": date_str == datetime.now().strftime("%Y-%m-%d")
-                    }
-                    week_data.append(day_data)
-            response["weeks"].append(week_data)
-            
         return response
     except Exception as e:
         logger.error(f"Error generating abstinence calendar: {e}")
