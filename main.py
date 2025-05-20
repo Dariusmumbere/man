@@ -391,7 +391,7 @@ class AbstinenceTracker(BaseModel):
     total_days: int = 0
 
 class AbstinenceCheckin(BaseModel):
-    date: str        # YYYY-MM-DD format
+    date: date       # YYYY-MM-DD format
     success: bool
     notes: Optional[str] = None
 
