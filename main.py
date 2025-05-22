@@ -401,19 +401,60 @@ def migrate_database():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Check if donor_name column exists in donations table
+        # Create activity_approvals table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS activity_approvals (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER NOT NULL REFERENCES activities(id),
+                activity_name TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                requested_amount FLOAT NOT NULL,
+                comments TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP,
+                approved_by TEXT,
+                response_comments TEXT
+            )
+        ''')
+        
+        # Create transactions table with description column if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id SERIAL PRIMARY KEY,
+                type TEXT NOT NULL,  -- 'deposit' or 'expense'
+                amount FLOAT NOT NULL,
+                description TEXT,
+                date DATE NOT NULL DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Add description column if it doesn't exist
         cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name='donations' AND column_name='donor_name'
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE transactions ADD COLUMN description TEXT;
+                EXCEPTION
+                    WHEN duplicate_column THEN 
+                    RAISE NOTICE 'column description already exists in transactions';
+                END;
+            END $$;
         """)
-        if not cursor.fetchone():
-            # Add the donor_name column if it doesn't exist
-            cursor.execute("""
-                ALTER TABLE donations 
-                ADD COLUMN donor_name TEXT
-            """)
-            logger.info("Added donor_name column to donations table")
+        
+        # Add status column to activities if it doesn't exist
+        cursor.execute("""
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE activities ADD COLUMN status TEXT DEFAULT 'pending';
+                EXCEPTION
+                    WHEN duplicate_column THEN 
+                    RAISE NOTICE 'column status already exists in activities';
+                END;
+            END $$;
+        """)
         
         conn.commit()
     except Exception as e:
