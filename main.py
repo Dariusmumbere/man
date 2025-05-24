@@ -4751,17 +4751,19 @@ def get_activity_approvals(status: Optional[str] = None):
         cursor = conn.cursor()
         
         query = '''
-            SELECT id, activity_id, activity_name, requested_by, requested_amount, 
-                   comments, status, created_at, approved_at, approved_by, response_comments
-            FROM activity_approvals
+            SELECT aa.id, aa.activity_id, aa.activity_name, aa.requested_by, 
+                   aa.requested_amount, aa.comments, aa.status, aa.created_at, 
+                   aa.approved_at, aa.approved_by, aa.response_comments
+            FROM activity_approvals aa
+            JOIN activities a ON aa.activity_id = a.id
         '''
         
         params = []
         if status:
-            query += ' WHERE status = %s'
+            query += ' WHERE aa.status = %s'
             params.append(status)
             
-        query += ' ORDER BY created_at DESC'
+        query += ' ORDER BY aa.created_at DESC'
         
         cursor.execute(query, params)
         
@@ -4812,6 +4814,7 @@ def get_activity_approvals(status: Optional[str] = None):
     finally:
         if conn:
             conn.close()
+            
 @app.get("/activities/{activity_id}/budget-items/", response_model=List[BudgetItem])
 def get_activity_budget_items(activity_id: int):
     conn = None
