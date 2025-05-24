@@ -743,7 +743,6 @@ def init_db():
 
 # Initialize database
 init_db()
-migrate_database()
             
 # Product endpoints
 @app.post("/products/")
