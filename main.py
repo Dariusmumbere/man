@@ -364,108 +364,9 @@ class BankAccount(BaseModel):
     account_number: str
     balance: float
     
-class ActivityApprovalRequest(BaseModel):
-    activity_id: int
-    requested_by: str
-    requested_amount: float
-    comments: Optional[str] = None
-
-class ActivityApproval(BaseModel):
-    id: int
-    activity_id: int
-    activity_name: str
-    requested_by: str
-    requested_amount: float
-    comments: Optional[str]
-    status: str  # pending, approved, rejected
-    created_at: datetime
-    approved_at: Optional[datetime]
-    approved_by: Optional[str]
-    response_comments: Optional[str]  
-    budget_items: List[BudgetItem] = []
-    
-class ActivityApprovalUpdate(BaseModel):
-    decision: str
-    approved_by: str
-    response_comments: Optional[str] = None     
-
-
 # File storage setup
 UPLOAD_DIR = "uploads/fundraising"
 Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
-
-def migrate_database():
-    """Handle database schema migrations"""
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Create activity_approvals table if it doesn't exist
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS activity_approvals (
-                id SERIAL PRIMARY KEY,
-                activity_id INTEGER NOT NULL REFERENCES activities(id),
-                activity_name TEXT NOT NULL,
-                requested_by TEXT NOT NULL,
-                requested_amount FLOAT NOT NULL,
-                comments TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                approved_at TIMESTAMP,
-                approved_by TEXT,
-                response_comments TEXT
-            )
-        ''')
-        
-        # Create transactions table with description column if it doesn't exist
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
-                id SERIAL PRIMARY KEY,
-                type TEXT NOT NULL,  -- 'deposit' or 'expense'
-                amount FLOAT NOT NULL,
-                description TEXT,
-                date DATE NOT NULL DEFAULT CURRENT_DATE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Add description column if it doesn't exist
-        cursor.execute("""
-            DO $$
-            BEGIN
-                BEGIN
-                    ALTER TABLE transactions ADD COLUMN description TEXT;
-                EXCEPTION
-                    WHEN duplicate_column THEN 
-                    RAISE NOTICE 'column description already exists in transactions';
-                END;
-            END $$;
-        """)
-        
-        # Add status column to activities if it doesn't exist
-        cursor.execute("""
-            DO $$
-            BEGIN
-                BEGIN
-                    ALTER TABLE activities ADD COLUMN status TEXT DEFAULT 'pending';
-                EXCEPTION
-                    WHEN duplicate_column THEN 
-                    RAISE NOTICE 'column status already exists in activities';
-                END;
-            END $$;
-        """)
-        
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error migrating database: {e}")
-        if conn:
-            conn.rollback()
-        raise
-    finally:
-        if conn:
-            conn.close()
-
 
 # Initialize database tables
 def init_db():
@@ -604,12 +505,12 @@ def init_db():
         ''')
         
         cursor.execute('''
-    CREATE TABLE diary_entries (
-        id SERIAL PRIMARY KEY,
-        content TEXT NOT NULL,
-        date TEXT NOT NULL
-    )
-''')
+            CREATE TABLE diary_entries (
+                id SERIAL PRIMARY KEY,
+                content TEXT NOT NULL,
+                date TEXT NOT NULL
+            )
+        ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS folders (
                 id TEXT PRIMARY KEY,
@@ -794,16 +695,6 @@ def init_db():
                 name TEXT NOT NULL UNIQUE,
                 account_number TEXT NOT NULL,
                 balance FLOAT DEFAULT 0
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS budget_approvals (
-                id SERIAL PRIMARY KEY,
-                activity_id INTEGER REFERENCES activities(id),
-                approved BOOLEAN NOT NULL,
-                remarks TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_by INTEGER REFERENCES users(id)
             )
         ''')
         
@@ -4465,497 +4356,84 @@ def get_activity_budget_items(activity_id: int):
     finally:
         if conn:
             conn.close()
-            
 
-
-@app.post("/donations/with-stats/", response_model=Donation)
-def create_donation_with_stats(donation: DonationCreate):
+@app.get("/activities/pending/", response_model=List[Activity])
+def get_pending_activities():
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
         
-        # First, get or create the donor
         cursor.execute('''
-            SELECT id FROM donors WHERE name = %s
-        ''', (donation.donor_name,))
-        donor = cursor.fetchone()
+            SELECT a.id, a.name, a.project_id, p.name as project_name, 
+                   a.description, a.start_date, a.end_date, 
+                   a.budget, a.status, a.created_at
+            FROM activities a
+            JOIN projects p ON a.project_id = p.id
+            WHERE a.status = 'pending'
+            ORDER BY a.created_at DESC
+        ''')
         
-        donor_id = None
-        if donor:
-            donor_id = donor[0]
-        else:
-            # Create a new donor if not exists
-            cursor.execute('''
-                INSERT INTO donors (name, donor_type, category)
-                VALUES (%s, 'individual', 'one-time')
-                RETURNING id
-            ''', (donation.donor_name,))
-            donor_id = cursor.fetchone()[0]
-        
-        # Insert donation with donor_id
-        cursor.execute('''
-            INSERT INTO donations (donor_id, donor_name, amount, payment_method, date, project, notes, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'completed')
-            RETURNING id, donor_name, amount, payment_method, date, project, notes, status, created_at
-        ''', (
-            donor_id,
-            donation.donor_name,
-            donation.amount,
-            donation.payment_method,
-            donation.date,
-            donation.project,
-            donation.notes
-        ))
-        
-        new_donation = cursor.fetchone()
-        
-        # Update donor statistics
-        cursor.execute('''
-            UPDATE donors
-            SET 
-                stats = jsonb_build_object(
-                    'donation_count', COALESCE((SELECT COUNT(*) FROM donations WHERE donor_id = donors.id), 0),
-                    'total_donated', COALESCE((SELECT SUM(amount) FROM donations WHERE donor_id = donors.id), 0),
-                    'first_donation', (SELECT MIN(date) FROM donations WHERE donor_id = donors.id),
-                    'last_donation', (SELECT MAX(date) FROM donations WHERE donor_id = donors.id)
-                )
-            WHERE id = %s
-        ''', (donor_id,))
-        
-        # Update the appropriate program area balance if project is specified
-        if donation.project:
-            cursor.execute('''
-                UPDATE program_areas
-                SET balance = balance + %s
-                WHERE name = %s
-                RETURNING balance
-            ''', (donation.amount, donation.project))
-            
-            if not cursor.fetchone():
-                raise HTTPException(status_code=400, detail=f"Program area '{donation.project}' not found")
-        
-        # Update main account balance
-        cursor.execute('''
-            UPDATE bank_accounts
-            SET balance = balance + %s
-            WHERE name = 'Main Account'
-            RETURNING balance
-        ''', (donation.amount,))
-        
-        if not cursor.fetchone():
-            raise HTTPException(status_code=500, detail="Main account not found")
-        
-        conn.commit()
-        
-        return {
-            "id": new_donation[0],
-            "donor_name": new_donation[1],
-            "amount": new_donation[2],
-            "payment_method": new_donation[3],
-            "date": new_donation[4],
-            "project": new_donation[5],
-            "notes": new_donation[6],
-            "status": new_donation[7],
-            "created_at": new_donation[8]
-        }
-    except Exception as e:
-        logger.error(f"Error creating donation with stats: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
-
-
-@app.post("/activity-approvals/", response_model=ActivityApproval)
-def create_activity_approval(approval: ActivityApprovalRequest):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Verify activity exists
-        cursor.execute('SELECT name FROM activities WHERE id = %s', (approval.activity_id,))
-        activity = cursor.fetchone()
-        if not activity:
-            raise HTTPException(status_code=404, detail="Activity not found")
-        
-        activity_name = activity[0]
-        
-        cursor.execute('''
-            INSERT INTO activity_approvals 
-            (activity_id, activity_name, requested_by, requested_amount, comments, status)
-            VALUES (%s, %s, %s, %s, %s, 'pending')
-            RETURNING id, activity_id, activity_name, requested_by, requested_amount, 
-                      comments, status, created_at, approved_at, approved_by, response_comments
-        ''', (
-            approval.activity_id,
-            activity_name,
-            approval.requested_by,
-            approval.requested_amount,
-            approval.comments
-        ))
-        
-        new_approval = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "id": new_approval[0],
-            "activity_id": new_approval[1],
-            "activity_name": new_approval[2],
-            "requested_by": new_approval[3],
-            "requested_amount": new_approval[4],
-            "comments": new_approval[5],
-            "status": new_approval[6],
-            "created_at": new_approval[7],
-            "approved_at": new_approval[8],
-            "approved_by": new_approval[9],
-            "response_comments": new_approval[10]
-        }
-    except Exception as e:
-        logger.error(f"Error creating activity approval: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
-
-@app.put("/activity-approvals/{approval_id}", response_model=ActivityApproval)
-def update_activity_approval(approval_id: int, update_data: ActivityApprovalUpdate):
-    if update_data.decision not in ["approved", "rejected"]:
-        raise HTTPException(status_code=400, detail="Decision must be either 'approved' or 'rejected'")
-    
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # First get the approval details including the activity and requested amount
-        cursor.execute('''
-            SELECT activity_id, activity_name, requested_amount 
-            FROM activity_approvals 
-            WHERE id = %s
-        ''', (approval_id,))
-        approval = cursor.fetchone()
-        if not approval:
-            raise HTTPException(status_code=404, detail="Approval request not found")
-            
-        activity_id, activity_name, requested_amount = approval
-        
-        # Update the approval status
-        cursor.execute('''
-            UPDATE activity_approvals
-            SET status = %s,
-                approved_at = CURRENT_TIMESTAMP,
-                approved_by = %s,
-                response_comments = %s
-            WHERE id = %s
-            RETURNING id, activity_id, activity_name, requested_by, requested_amount, 
-                      comments, status, created_at, approved_at, approved_by, response_comments
-        ''', (
-            update_data.decision, 
-            update_data.approved_by, 
-            update_data.response_comments, 
-            approval_id
-        ))
-        
-        updated_approval = cursor.fetchone()
-        
-        # If approved, update the activity status and perform deductions
-        if update_data.decision == "approved":
-            # Update the activity status
-            cursor.execute('''
-                UPDATE activities
-                SET status = 'approved'
-                WHERE id = %s
-            ''', (activity_id,))
-            
-            # Get the project and program area for this activity
-            cursor.execute('''
-                SELECT p.funding_source, a.budget
-                FROM activities a
-                JOIN projects p ON a.project_id = p.id
-                WHERE a.id = %s
-            ''', (activity_id,))
-            project_info = cursor.fetchone()
-            
-            if project_info:
-                funding_source, budget = project_info
-                
-                # If funding source is one of our program areas, deduct from that program
-                if funding_source in ["Women Empowerment", "Vocational Education", "Climate Change", "Reproductive Health"]:
-                    # Deduct from program area
-                    cursor.execute('''
-                        UPDATE program_areas
-                        SET balance = balance - %s
-                        WHERE name = %s
-                        RETURNING balance
-                    ''', (budget, funding_source))
-                    
-                    if not cursor.fetchone():
-                        logger.warning(f"Failed to update program area {funding_source}")
-                
-                # Always deduct from main account
-                cursor.execute('''
-                    UPDATE bank_accounts
-                    SET balance = balance - %s
-                    WHERE name = 'Main Account'
-                    RETURNING balance
-                ''', (budget,))
-                
-                if not cursor.fetchone():
-                    logger.error("Failed to update main account")
-                
-                # Record the transaction
-                cursor.execute('''
-                    INSERT INTO transactions (type, amount, description, date)
-                    VALUES (%s, %s, %s, CURRENT_DATE)
-                ''', (
-                    'expense',
-                    budget,
-                    f"Budget allocation for activity: {activity_name}"
-                ))
-        
-        conn.commit()
-        
-        return {
-            "id": updated_approval[0],
-            "activity_id": updated_approval[1],
-            "activity_name": updated_approval[2],
-            "requested_by": updated_approval[3],
-            "requested_amount": updated_approval[4],
-            "comments": updated_approval[5],
-            "status": updated_approval[6],
-            "created_at": updated_approval[7],
-            "approved_at": updated_approval[8],
-            "approved_by": updated_approval[9],
-            "response_comments": updated_approval[10]
-        }
-    except Exception as e:
-        logger.error(f"Error updating activity approval: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
-            
-@app.get("/activity-approvals/", response_model=List[ActivityApproval])
-def get_activity_approvals(status: Optional[str] = None):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        query = '''
-            SELECT aa.id, aa.activity_id, aa.activity_name, aa.requested_by, 
-                   aa.requested_amount, aa.comments, aa.status, aa.created_at, 
-                   aa.approved_at, aa.approved_by, aa.response_comments
-            FROM activity_approvals aa
-            JOIN activities a ON aa.activity_id = a.id
-        '''
-        
-        params = []
-        if status:
-            query += ' WHERE aa.status = %s'
-            params.append(status)
-            
-        query += ' ORDER BY aa.created_at DESC'
-        
-        cursor.execute(query, params)
-        
-        approvals = []
+        activities = []
         for row in cursor.fetchall():
-            # Get budget items for this activity
-            cursor.execute('''
-                SELECT id, project_id, activity_id, item_name, description, 
-                       quantity, unit_price, total, category, created_at
-                FROM budget_items
-                WHERE activity_id = %s
-            ''', (row[1],))  # row[1] is activity_id
-            
-            budget_items = []
-            for item in cursor.fetchall():
-                budget_items.append({
-                    "id": item[0],
-                    "project_id": item[1],
-                    "activity_id": item[2],
-                    "item_name": item[3],
-                    "description": item[4],
-                    "quantity": item[5],
-                    "unit_price": item[6],
-                    "total": item[7],
-                    "category": item[8],
-                    "created_at": item[9]
-                })
-            
-            approvals.append({
+            activities.append({
                 "id": row[0],
-                "activity_id": row[1],
-                "activity_name": row[2],
-                "requested_by": row[3],
-                "requested_amount": row[4],
-                "comments": row[5],
-                "status": row[6],
-                "created_at": row[7],
-                "approved_at": row[8],
-                "approved_by": row[9],
-                "response_comments": row[10],
-                "budget_items": budget_items  
-            })
-            
-        return approvals
-    except Exception as e:
-        logger.error(f"Error fetching activity approvals: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch activity approvals")
-    finally:
-        if conn:
-            conn.close()
-            
-@app.get("/activities/{activity_id}/budget-items/", response_model=List[BudgetItem])
-def get_activity_budget_items(activity_id: int):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Verify activity exists
-        cursor.execute('SELECT id FROM activities WHERE id = %s', (activity_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Activity not found")
-            
-        cursor.execute('''
-            SELECT id, project_id, activity_id, item_name, description, 
-                   quantity, unit_price, total, category, created_at
-            FROM budget_items
-            WHERE activity_id = %s
-            ORDER BY created_at DESC
-        ''', (activity_id,))
-        
-        items = []
-        for row in cursor.fetchall():
-            items.append({
-                "id": row[0],
-                "project_id": row[1],
-                "activity_id": row[2],
-                "item_name": row[3],
+                "name": row[1],
+                "project_id": row[2],
+                "project_name": row[3],
                 "description": row[4],
-                "quantity": row[5],
-                "unit_price": row[6],
-                "total": row[7],
-                "category": row[8],
+                "start_date": row[5].strftime("%Y-%m-%d"),
+                "end_date": row[6].strftime("%Y-%m-%d"),
+                "budget": row[7],
+                "status": row[8],
                 "created_at": row[9].strftime("%Y-%m-%d %H:%M:%S")
             })
             
-        return items
+        return activities
     except Exception as e:
-        logger.error(f"Error fetching activity budget items: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch activity budget items")
+        logger.error(f"Error fetching pending activities: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch pending activities")
     finally:
         if conn:
             conn.close()
 
-@app.post("/activities/{activity_id}/budget-items/", response_model=BudgetItem)
-def create_activity_budget_item(activity_id: int, budget_item: BudgetItemCreate):
+@app.put("/activities/{activity_id}/approve/", response_model=Activity)
+def approve_activity(activity_id: int):
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
         
-        # Verify activity exists and get its project_id
-        cursor.execute('SELECT project_id FROM activities WHERE id = %s', (activity_id,))
-        activity = cursor.fetchone()
-        if not activity:
-            raise HTTPException(status_code=404, detail="Activity not found")
-            
-        project_id = activity[0]
-            
-        cursor.execute('''
-            INSERT INTO budget_items (project_id, activity_id, item_name, description, quantity, unit_price, category)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, project_id, activity_id, item_name, description, quantity, unit_price, total, category, created_at
-        ''', (
-            project_id,
-            activity_id,
-            budget_item.item_name,
-            budget_item.description,
-            budget_item.quantity,
-            budget_item.unit_price,
-            budget_item.category
-        ))
-        
-        new_item = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "id": new_item[0],
-            "project_id": new_item[1],
-            "activity_id": new_item[2],
-            "item_name": new_item[3],
-            "description": new_item[4],
-            "quantity": new_item[5],
-            "unit_price": new_item[6],
-            "total": new_item[7],
-            "category": new_item[8],
-            "created_at": new_item[9]
-        }
-    except Exception as e:
-        logger.error(f"Error creating activity budget item: {e}")
-        if conn:
-            conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
-
-@app.post("/activities/{activity_id}/request-approval")
-def request_activity_approval(activity_id: int, requested_by: str = "system"):
-    conn = None
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Get activity details
-        cursor.execute('''
-            SELECT a.id, a.name, a.budget 
-            FROM activities a
-            WHERE a.id = %s
-        ''', (activity_id,))
-        activity = cursor.fetchone()
-        
-        if not activity:
-            raise HTTPException(status_code=404, detail="Activity not found")
-            
-        # Create approval request
-        cursor.execute('''
-            INSERT INTO activity_approvals 
-            (activity_id, activity_name, requested_by, requested_amount, status)
-            VALUES (%s, %s, %s, %s, 'pending')
-            ON CONFLICT (activity_id) DO UPDATE
-            SET status = 'pending',
-                requested_at = CURRENT_TIMESTAMP
-            RETURNING id
-        ''', (
-            activity[0],  # activity_id
-            activity[1],  # activity_name
-            requested_by,
-            activity[2]   # budget amount
-        ))
-        
-        # Update activity status
         cursor.execute('''
             UPDATE activities
-            SET status = 'pending'
+            SET status = 'approved'
             WHERE id = %s
+            RETURNING id, name, project_id, description, start_date, end_date, budget, status, created_at
         ''', (activity_id,))
         
+        updated_activity = cursor.fetchone()
+        if not updated_activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+            
+        # Get project name for the response
+        cursor.execute('SELECT name FROM projects WHERE id = %s', (updated_activity[2],))
+        project_name = cursor.fetchone()[0]
+        
         conn.commit()
-        return {"message": "Approval requested successfully"}
+        return {
+            "id": updated_activity[0],
+            "name": updated_activity[1],
+            "project_id": updated_activity[2],
+            "project_name": project_name,
+            "description": updated_activity[3],
+            "start_date": updated_activity[4].strftime("%Y-%m-%d"),
+            "end_date": updated_activity[5].strftime("%Y-%m-%d"),
+            "budget": updated_activity[6],
+            "status": updated_activity[7],
+            "created_at": updated_activity[8].strftime("%Y-%m-%d %H:%M:%S")
+        }
     except Exception as e:
-        logger.error(f"Error requesting approval: {e}")
+        logger.error(f"Error approving activity: {e}")
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
