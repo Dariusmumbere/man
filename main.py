@@ -4440,6 +4440,41 @@ def approve_activity(activity_id: int):
         if conn:
             conn.close()
 
+@app.get("/donations/{donation_id}", response_model=Donation)
+def get_donation(donation_id: int):
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, donor_name, amount, payment_method, date, project, notes, status, created_at
+            FROM donations
+            WHERE id = %s
+        ''', (donation_id,))
+        
+        donation = cursor.fetchone()
+        if not donation:
+            raise HTTPException(status_code=404, detail="Donation not found")
+            
+        return {
+            "id": donation[0],
+            "donor_name": donation[1],
+            "amount": donation[2],
+            "payment_method": donation[3],
+            "date": donation[4],
+            "project": donation[5],
+            "notes": donation[6],
+            "status": donation[7],
+            "created_at": donation[8]
+        }
+    except Exception as e:
+        logger.error(f"Error fetching donation: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch donation")
+    finally:
+        if conn:
+            conn.close()
+
 # Run the application
 if __name__ == "__main__":
     import uvicorn
