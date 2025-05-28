@@ -1983,12 +1983,13 @@ def download_file(file_id: str):
         file_data = cursor.fetchone()
         
         if not file_data:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise HTTPException(status_code=404, detail="File not found in database")
         
         file_name, file_path = file_data
         file_path = Path(file_path)
         
         if not file_path.exists():
+            logger.error(f"File not found at path: {file_path}")
             raise HTTPException(status_code=404, detail="File not found on server")
         
         return FileResponse(
@@ -1996,13 +1997,15 @@ def download_file(file_id: str):
             filename=file_name,
             media_type='application/octet-stream'
         )
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
-        logger.error(f"Error downloading file: {e}")
+        logger.error(f"Error downloading file: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to download file")
     finally:
         if conn:
             conn.close()
-
+            
 @app.put("/folders/{folder_id}")
 def rename_folder(folder_id: str, name: str = Form(...)):
     conn = None
