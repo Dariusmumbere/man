@@ -402,9 +402,6 @@ def init_db():
             END $$;
         """)
                         
-        
-        
-        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
